@@ -1,0 +1,7 @@
+{
+  "name": "OmniTrace",
+  "description": "High-value medical inventory management system with strict audit logging and state machine logic.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

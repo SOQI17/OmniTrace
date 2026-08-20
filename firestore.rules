@@ -1,0 +1,27 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Regla auxiliar para verificar autenticación
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Colección de Activos (Assets)
+    match /assets/{assetId} {
+      // Permitir leer y escribir si el usuario está logueado en el App
+      allow read, write: if isAuthenticated();
+    }
+
+    // Colección de Auditoría (Audit Log)
+    match /audit_log/{logId} {
+      // Permitir leer el historial
+      allow read: if isAuthenticated();
+      // Permitir crear registros (Append-only)
+      allow create: if isAuthenticated();
+      // Bloquear edición o borrado de historial para integridad
+      allow update, delete: if false;
+    }
+  }
+}
