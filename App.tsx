@@ -83,15 +83,6 @@ import {
   Upload
 } from 'lucide-react';
 
-// ─── ROLE MAPPING (centralizado — no hardcodear en auth) ────────────────────
-// Para producción: leer roles desde Firestore (colección "users/{uid}").
-// Mantener este mapa solo mientras se migra a claims de Firebase Auth.
-const ROLE_MAP: Record<string, UserRole> = {
-  'alexis.guerra': 'ADMIN',
-  'paul.orozco':   'IMPORTER',
-  'vosorio':       'WAREHOUSE',
-};
-
 // ─── PERMISOS DISPONIBLES ────────────────────────────────────────────────────
 // Cada permiso puede sobreescribir el comportamiento del rol base.
 const ALL_PERMISSIONS: { key: string; label: string; description: string; group: string }[] = [
@@ -123,14 +114,6 @@ const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
   IMPORTER:  { crear_solicitudes: true,  prestamo_herramientas: true,  ver_logistica: true,  editar_logistica: true,  cerrar_importacion: true,  exportar_excel: true,  ver_bodega: false, recibir_bodega: false, despachar: false, ajustar_inventario: false, ver_documentos: true,  subir_documentos: true,  eliminar_documentos: true,  ver_retornos: true,  gestionar_retornos: false },
   WAREHOUSE: { crear_solicitudes: false, prestamo_herramientas: false, ver_logistica: false, editar_logistica: false, cerrar_importacion: false, exportar_excel: false, ver_bodega: true,  recibir_bodega: true,  despachar: true,  ajustar_inventario: true,  ver_documentos: true,  subir_documentos: true,  eliminar_documentos: false, ver_retornos: true,  gestionar_retornos: true  },
   ADMIN:     { crear_solicitudes: true,  prestamo_herramientas: true,  ver_logistica: true,  editar_logistica: true,  cerrar_importacion: true,  exportar_excel: true,  ver_bodega: true,  recibir_bodega: true,  despachar: true,  ajustar_inventario: true,  ver_documentos: true,  subir_documentos: true,  eliminar_documentos: true,  ver_retornos: true,  gestionar_retornos: true  },
-};
-
-const resolveRoleByEmail = (email: string): UserRole => {
-  const lower = email.toLowerCase();
-  for (const [key, role] of Object.entries(ROLE_MAP)) {
-    if (lower.includes(key)) return role;
-  }
-  return 'REQUESTER';
 };
 
 // ─── TOAST ──────────────────────────────────────────────────────────────────
@@ -193,11 +176,10 @@ const INITIAL_INVENTORY_DATA = [
 
 // ─── Cloudinary helpers (nivel módulo) ───────────────────────────────────────
 // Servicio gratuito: 25 GB storage, sin backend requerido.
-// Configuración: reemplaza los valores de CLOUDINARY_CONFIG con los tuyos.
-// Los encuentras en: cloudinary.com → Dashboard
+// Configura VITE_CLOUDINARY_CLOUD_NAME y VITE_CLOUDINARY_UPLOAD_PRESET en .env.local
 const CLOUDINARY_CONFIG = {
-  cloudName:    'dpnvqontu',
-  uploadPreset: 'omnitrace',
+  cloudName:    import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string,
+  uploadPreset: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string,
 };
 
 async function uploadDocToStorage(
@@ -1248,11 +1230,13 @@ export default function App() {
               setLoadingAuth(false);
               return;
             }
-            role = (data.role as UserRole) || resolveRoleByEmail(firebaseUser.email);
+            // El rol viene de Firestore; si no está definido, mínimo privilegio
+            role = (data.role as UserRole) || 'REQUESTER';
             displayName = data.displayName || firebaseUser.email.split('@')[0];
           } else {
-            // 2. Si no está en Firestore aún, usar ROLE_MAP y crear el doc
-            role = resolveRoleByEmail(firebaseUser.email);
+            // 2. Usuario nuevo — asignar mínimo privilegio y auto-registrar en Firestore
+            // Un ADMIN puede asignar el rol correcto desde el panel de administración.
+            role = 'REQUESTER';
             displayName = firebaseUser.email.split('@')[0];
             // Auto-registrar en Firestore para futuras gestiones
             await setDoc(doc(db, 'users', firebaseUser.uid), {
@@ -1274,9 +1258,8 @@ export default function App() {
           setCurrentUser({ id: firebaseUser.uid, name: displayName, role });
           setSessionExpired(false);
         } catch {
-          // Fallback si Firestore falla
-          const role = resolveRoleByEmail(firebaseUser.email);
-          setCurrentUser({ id: firebaseUser.uid, name: firebaseUser.email.split('@')[0], role });
+          // Fallback si Firestore falla — mínimo privilegio por seguridad
+          setCurrentUser({ id: firebaseUser.uid, name: firebaseUser.email.split('@')[0], role: 'REQUESTER' });
           setSessionExpired(false);
         }
       } else {

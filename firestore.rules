@@ -2,25 +2,57 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Regla auxiliar para verificar autenticación
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Colección de Activos (Assets)
-    match /assets/{assetId} {
-      // Permitir leer y escribir si el usuario está logueado en el App
-      allow read, write: if isAuthenticated();
+    function isAdmin() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
     }
 
-    // Colección de Auditoría (Audit Log)
-    match /audit_log/{logId} {
-      // Permitir leer el historial
+    function isWarehouse() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'WAREHOUSE';
+    }
+
+    function isImporter() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'IMPORTER';
+    }
+
+    // ─── Usuarios ─────────────────────────────────────────────────────────────
+    // Cada usuario puede leer su propio perfil.
+    // Solo ADMIN puede crear, modificar o eliminar perfiles de usuario.
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAdmin();
+    }
+
+    // ─── Activos (Assets) ─────────────────────────────────────────────────────
+    // Cualquier usuario autenticado puede leer activos.
+    // Solo ADMIN, IMPORTER y WAREHOUSE pueden crear o modificar.
+    // Solo ADMIN puede eliminar.
+    match /assets/{assetId} {
       allow read: if isAuthenticated();
-      // Permitir crear registros (Append-only)
+      allow create: if isAdmin() || isImporter() || isWarehouse();
+      allow update: if isAdmin() || isImporter() || isWarehouse();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Auditoría (Audit Log) ────────────────────────────────────────────────
+    // Cualquier usuario autenticado puede leer el historial.
+    // Cualquier usuario autenticado puede crear registros (append-only).
+    // Nadie puede editar o borrar registros de auditoría (integridad del log).
+    match /audit_log/{logId} {
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated();
-      // Bloquear edición o borrado de historial para integridad
       allow update, delete: if false;
     }
   }
