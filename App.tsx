@@ -307,6 +307,123 @@ const SearchableSelect = ({ options, value, onChange, placeholder }: {
     );
 };
 
+// ─── FILTER SELECT ──────────────────────────────────────────────────────────
+// Dropdown tipo "pill" profesional para los filtros de tabla
+const FilterSelect = ({
+    value, onChange, placeholder, options
+}: {
+    value: string;
+    onChange: (val: string) => void;
+    placeholder: string;
+    options: { value: string; label: string }[];
+}) => {
+    const [open, setOpen] = useState(false);
+    const [rect, setRect] = useState<DOMRect | null>(null);
+    const btnRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+
+    // Cerrar al hacer click fuera
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (
+                btnRef.current && !btnRef.current.contains(e.target as Node) &&
+                panelRef.current && !panelRef.current.contains(e.target as Node)
+            ) setOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    // Recalcular posición al hacer scroll o resize
+    useEffect(() => {
+        if (!open) return;
+        const update = () => {
+            if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+        };
+        window.addEventListener('scroll', update, true);
+        window.addEventListener('resize', update);
+        return () => {
+            window.removeEventListener('scroll', update, true);
+            window.removeEventListener('resize', update);
+        };
+    }, [open]);
+
+    const handleOpen = () => {
+        if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+        setOpen(o => !o);
+    };
+
+    const selected = options.find(o => o.value === value);
+    const isActive = !!value;
+
+    return (
+        <>
+            <button
+                ref={btnRef}
+                type="button"
+                onClick={handleOpen}
+                className={`
+                    flex items-center gap-2 px-4 py-2 rounded-full text-[11px] font-bold uppercase tracking-wider
+                    border transition-all duration-200 whitespace-nowrap select-none
+                    ${isActive
+                        ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-500/20'
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }
+                `}
+            >
+                <span>{selected ? selected.label.replace(/_/g,' ') : placeholder}</span>
+                <ChevronDown
+                    size={12}
+                    className={`transition-transform duration-200 flex-shrink-0 ${open ? 'rotate-180' : ''} ${isActive ? 'text-white/80' : 'text-slate-400'}`}
+                />
+            </button>
+
+            {open && rect && (
+                <div
+                    ref={panelRef}
+                    style={{
+                        position: 'fixed',
+                        top: rect.bottom + 8,
+                        left: rect.left,
+                        zIndex: 9999,
+                        minWidth: Math.max(rect.width, 200),
+                    }}
+                    className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden animate-fadeIn"
+                >
+                    {/* Opción "todos" */}
+                    <button
+                        type="button"
+                        onClick={() => { onChange(''); setOpen(false); }}
+                        className={`w-full text-left px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider transition-colors
+                            ${!value
+                                ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
+                            }`}
+                    >
+                        {placeholder}
+                    </button>
+                    <div className="border-t border-slate-100 dark:border-slate-700 max-h-56 overflow-y-auto">
+                        {options.map(opt => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => { onChange(opt.value); setOpen(false); }}
+                                className={`w-full text-left px-4 py-2.5 text-[11px] uppercase tracking-wider transition-colors
+                                    ${value === opt.value
+                                        ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-bold'
+                                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 font-semibold'
+                                    }`}
+                            >
+                                {opt.label.replace(/_/g, ' ')}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+};
+
 // ─── TOAST COMPONENT ─────────────────────────────────────────────────────────
 const Toast: React.FC<{ config: ToastConfig; onDismiss: (id: string) => void }> = ({ config, onDismiss }) => {
     const colorMap: Record<ToastType, string> = {
@@ -2523,29 +2640,36 @@ export default function App() {
                             </div>
 
                             {/* ── Filtros avanzados ── */}
-                            <div className="px-6 py-3 border-b border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 flex flex-wrap gap-3 items-center">
-                                <select value={logisticsFilter.status} onChange={e => setLogisticsFilter(f => ({...f, status: e.target.value}))}
-                                    className="text-[10px] font-black uppercase border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-200">
-                                    <option value="">Todos los estados</option>
-                                    {Object.values(AssetStatus).map(s => <option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
-                                </select>
-                                <select value={logisticsFilter.condicion} onChange={e => setLogisticsFilter(f => ({...f, condicion: e.target.value}))}
-                                    className="text-[10px] font-black uppercase border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-200">
-                                    <option value="">Todas las condiciones</option>
-                                    {[...new Set(assets.map(a => a.metadata.condicion).filter(Boolean))].map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                                <select value={logisticsFilter.proveedor} onChange={e => setLogisticsFilter(f => ({...f, proveedor: e.target.value}))}
-                                    className="text-[10px] font-black uppercase border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-200">
-                                    <option value="">Todos los proveedores</option>
-                                    {[...new Set(assets.map(a => a.metadata.provider).filter(Boolean))].sort().map(p => <option key={p} value={p}>{p}</option>)}
-                                </select>
+                            <div className="px-6 py-3 border-b border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 flex flex-wrap gap-2 items-center">
+                                {/* Filter: Estado */}
+                                <FilterSelect
+                                    value={logisticsFilter.status}
+                                    onChange={v => setLogisticsFilter(f => ({...f, status: v}))}
+                                    placeholder="Todos los estados"
+                                    options={Object.values(AssetStatus).map(s => ({ value: s, label: s.replace(/_/g,' ') }))}
+                                />
+                                {/* Filter: Condición */}
+                                <FilterSelect
+                                    value={logisticsFilter.condicion}
+                                    onChange={v => setLogisticsFilter(f => ({...f, condicion: v}))}
+                                    placeholder="Todas las condiciones"
+                                    options={[...new Set(assets.map(a => a.metadata.condicion).filter(Boolean))].map(c => ({ value: c, label: c }))}
+                                />
+                                {/* Filter: Proveedor */}
+                                <FilterSelect
+                                    value={logisticsFilter.proveedor}
+                                    onChange={v => setLogisticsFilter(f => ({...f, proveedor: v}))}
+                                    placeholder="Todos los proveedores"
+                                    options={[...new Set(assets.map(a => a.metadata.provider).filter(Boolean))].sort().map(p => ({ value: p, label: p }))}
+                                />
                                 {(logisticsFilter.status || logisticsFilter.condicion || logisticsFilter.proveedor) && (
                                     <button onClick={() => setLogisticsFilter({ status: '', condicion: '', proveedor: '' })}
-                                        className="text-[10px] font-black text-red-500 hover:text-red-700 uppercase tracking-wide flex items-center gap-1">
-                                        <X size={12}/> Limpiar
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 dark:text-red-400 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
+                                        <X size={11}/> Limpiar filtros
                                     </button>
                                 )}
                             </div>
+
 
                             <div className="overflow-x-auto">
                                 <table className="w-full text-xs text-left min-w-[1000px]">
