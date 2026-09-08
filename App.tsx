@@ -83,7 +83,8 @@ import {
   FilePlus,
   Upload,
   Package,
-  ArrowUpDown
+  ArrowUpDown,
+  Calendar
 } from 'lucide-react';
 
 // ─── PERMISOS DISPONIBLES ────────────────────────────────────────────────────
@@ -791,7 +792,10 @@ export default function App() {
   const [sparePartsLoading, setSparePartsLoading] = useState(true);
   const [sparePartsSearch, setSparePartsSearch] = useState('');
   const [sparePartsDebouncedSearch, setSparePartsDebouncedSearch] = useState('');
-  const [sparePartsFilterFecha, setSparePartsFilterFecha] = useState('');
+  // Filtro jerárquico por fecha de pedido
+  const [sparePartsFilterAnio, setSparePartsFilterAnio] = useState('');
+  const [sparePartsFilterMes, setSparePartsFilterMes] = useState('');
+  const [sparePartsFilterDia, setSparePartsFilterDia] = useState('');
   const [sparePartsFilterMod, setSparePartsFilterMod] = useState('');
   const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
   const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az'>('newest');
@@ -806,6 +810,50 @@ export default function App() {
     sparePartsSearchTimerRef.current = setTimeout(() => setSparePartsDebouncedSearch(value), 250);
   };
 
+  // Helper para descomponer cualquier fecha de repuesto en { anio, mes, dia }
+  const getSparePartDateParts = (sp: SparePart): { anio: string; mes: string; dia: string } => {
+    const raw = sp.fecha_pedido || sp.created_at || '';
+    if (raw) {
+      // Formato serial Excel
+      const num = Number(raw);
+      if (!isNaN(num) && num > 20000 && num < 80000 && !String(raw).includes('/') && !String(raw).includes('-')) {
+        const d = new Date(Date.UTC(1899, 11, 30) + num * 86400000);
+        return {
+          anio: String(d.getUTCFullYear()),
+          mes: String(d.getUTCMonth() + 1).padStart(2, '0'),
+          dia: String(d.getUTCDate()).padStart(2, '0')
+        };
+      }
+      // Formato DD/MM/YYYY
+      if (raw.includes('/')) {
+        const p = raw.split('/');
+        if (p.length === 3) {
+          return {
+            anio: p[2].trim(),
+            mes: p[1].trim().padStart(2, '0'),
+            dia: p[0].trim().padStart(2, '0')
+          };
+        }
+      }
+      // Formato YYYY-MM-DD
+      if (raw.includes('-')) {
+        const p = raw.split('T')[0].split('-');
+        if (p.length === 3) {
+          return {
+            anio: p[0].trim(),
+            mes: p[1].trim().padStart(2, '0'),
+            dia: p[2].trim().padStart(2, '0')
+          };
+        }
+      }
+    }
+    return {
+      anio: sp.anio ? String(sp.anio) : '',
+      mes: '',
+      dia: ''
+    };
+  };
+
   // ─── Repuestos: Lógica de filtrado + ordenamiento (a nivel superior del componente) ───
   const filteredSpareParts = React.useMemo(() => {
     const search = sparePartsDebouncedSearch.toLowerCase();
@@ -815,10 +863,16 @@ export default function App() {
         sp.descripcion?.toLowerCase().includes(search) ||
         sp.cliente?.toLowerCase().includes(search) ||
         sp.orden_ge?.toLowerCase().includes(search);
-      const matchFecha = !sparePartsFilterFecha || sp.fecha_pedido === sparePartsFilterFecha;
+
+      // Filtro jerárquico por fecha
+      const dp = getSparePartDateParts(sp);
+      const matchAnio = !sparePartsFilterAnio || dp.anio === sparePartsFilterAnio;
+      const matchMes = !sparePartsFilterMes || dp.mes === sparePartsFilterMes;
+      const matchDia = !sparePartsFilterDia || dp.dia === sparePartsFilterDia;
+
       const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
       const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
-      return matchSearch && matchFecha && matchMod && matchCondicion;
+      return matchSearch && matchAnio && matchMes && matchDia && matchMod && matchCondicion;
     });
 
     const parseDateValue = (sp: SparePart): number => {
@@ -869,9 +923,47 @@ export default function App() {
           return 0;
       }
     });
-  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterFecha, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsSort]);
+  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterAnio, sparePartsFilterMes, sparePartsFilterDia, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsSort]);
 
-  const uniqueFechasPedido = React.useMemo(() => [...new Set(spareParts.map(sp => sp.fecha_pedido).filter(Boolean))], [spareParts]);
+  // Opciones jerárquicas dinámicas para Año, Mes y Día
+  const uniqueAnios = React.useMemo(() => {
+    const set = new Set<string>();
+    spareParts.forEach(sp => {
+      const { anio } = getSparePartDateParts(sp);
+      if (anio) set.add(anio);
+    });
+    return [...set].sort((a, b) => b.localeCompare(a));
+  }, [spareParts]);
+
+  const uniqueMeses = React.useMemo(() => {
+    const MESES_MAP: Record<string, string> = {
+      '01': '01 - Enero', '02': '02 - Febrero', '03': '03 - Marzo', '04': '04 - Abril',
+      '05': '05 - Mayo', '06': '06 - Junio', '07': '07 - Julio', '08': '08 - Agosto',
+      '09': '09 - Septiembre', '10': '10 - Octubre', '11': '11 - Noviembre', '12': '12 - Diciembre'
+    };
+    const set = new Set<string>();
+    spareParts.forEach(sp => {
+      const { anio, mes } = getSparePartDateParts(sp);
+      if (mes && (!sparePartsFilterAnio || anio === sparePartsFilterAnio)) {
+        set.add(mes);
+      }
+    });
+    return [...set].sort().map(m => ({ value: m, label: MESES_MAP[m] || m }));
+  }, [spareParts, sparePartsFilterAnio]);
+
+  const uniqueDias = React.useMemo(() => {
+    const set = new Set<string>();
+    spareParts.forEach(sp => {
+      const { anio, mes, dia } = getSparePartDateParts(sp);
+      if (dia) {
+        const matchA = !sparePartsFilterAnio || anio === sparePartsFilterAnio;
+        const matchM = !sparePartsFilterMes || mes === sparePartsFilterMes;
+        if (matchA && matchM) set.add(dia);
+      }
+    });
+    return [...set].sort().map(d => ({ value: d, label: `Día ${d}` }));
+  }, [spareParts, sparePartsFilterAnio, sparePartsFilterMes]);
+
   const uniqueClientes = React.useMemo(() => [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))], [spareParts]);
   const uniqueMods = React.useMemo(() => [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))], [spareParts]);
   const uniqueCondiciones = React.useMemo(() => [...new Set(spareParts.map(sp => sp.condicion).filter(Boolean))], [spareParts]);
@@ -4378,17 +4470,50 @@ export default function App() {
                                         <option value="cliente_az">🏢 Cliente (A - Z)</option>
                                     </select>
                                 </div>
-                                {/* Filtro por Fecha de Pedido */}
-                                <FilterSelect value={sparePartsFilterFecha} onChange={setSparePartsFilterFecha} placeholder="Todas las fechas pedido"
-                                    options={(uniqueFechasPedido as string[]).sort().map(f => ({ value: f, label: f }))} />
+                                {/* Filtro Jerárquico: Año -> Mes -> Día */}
+                                <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-700">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 px-2 flex items-center gap-1">
+                                        <Calendar size={12} className="text-emerald-500" /> Fecha:
+                                    </span>
+                                    {/* Año */}
+                                    <FilterSelect 
+                                        value={sparePartsFilterAnio} 
+                                        onChange={(v) => { setSparePartsFilterAnio(v); setSparePartsFilterMes(''); setSparePartsFilterDia(''); }} 
+                                        placeholder="Todos los Años"
+                                        options={(uniqueAnios as string[]).map(a => ({ value: a, label: `Año ${a}` }))} 
+                                    />
+                                    {/* Mes (disponible siempre o dependiente del año) */}
+                                    <FilterSelect 
+                                        value={sparePartsFilterMes} 
+                                        onChange={(v) => { setSparePartsFilterMes(v); setSparePartsFilterDia(''); }} 
+                                        placeholder="Todos los Meses"
+                                        options={uniqueMeses} 
+                                    />
+                                    {/* Día (disponible dinámicamente) */}
+                                    <FilterSelect 
+                                        value={sparePartsFilterDia} 
+                                        onChange={setSparePartsFilterDia} 
+                                        placeholder="Todos los Días"
+                                        options={uniqueDias} 
+                                    />
+                                </div>
                                 {/* MOD */}
                                 <FilterSelect value={sparePartsFilterMod} onChange={setSparePartsFilterMod} placeholder="Todas las MOD"
                                     options={(uniqueMods as string[]).sort().map(m => ({ value: m, label: m }))} />
                                 {/* Condición */}
                                 <FilterSelect value={sparePartsFilterCondicion} onChange={setSparePartsFilterCondicion} placeholder="Todas las condiciones"
                                     options={(uniqueCondiciones as string[]).sort().map(c => ({ value: c, label: c }))} />
-                                {(sparePartsSearch || sparePartsFilterFecha || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsSort !== 'newest') && (
-                                    <button onClick={() => { setSparePartsSearch(''); setSparePartsDebouncedSearch(''); setSparePartsFilterFecha(''); setSparePartsFilterMod(''); setSparePartsFilterCondicion(''); setSparePartsSort('newest'); }}
+                                {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsSort !== 'newest') && (
+                                    <button onClick={() => { 
+                                        setSparePartsSearch(''); 
+                                        setSparePartsDebouncedSearch(''); 
+                                        setSparePartsFilterAnio(''); 
+                                        setSparePartsFilterMes(''); 
+                                        setSparePartsFilterDia(''); 
+                                        setSparePartsFilterMod(''); 
+                                        setSparePartsFilterCondicion(''); 
+                                        setSparePartsSort('newest'); 
+                                    }}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
                                         <X size={11}/> Limpiar
                                     </button>
