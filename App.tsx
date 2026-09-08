@@ -824,6 +824,11 @@ export default function App() {
     const parseDateValue = (sp: SparePart): number => {
       const dateStr = sp.fecha_pedido || sp.fecha_instalacion || sp.created_at || '';
       if (dateStr) {
+        // Soporte a número serial de Excel (ej: 46196)
+        const num = Number(dateStr);
+        if (!isNaN(num) && num > 20000 && num < 80000 && !String(dateStr).includes('/') && !String(dateStr).includes('-')) {
+          return new Date(Date.UTC(1899, 11, 30)).getTime() + num * 86400000;
+        }
         if (dateStr.includes('/')) {
           const parts = dateStr.split('/');
           if (parts.length === 3) {
@@ -4120,13 +4125,38 @@ export default function App() {
 
                         if (rows.length === 0) { showToast('El archivo está vacío.', 'error'); return; }
 
-                        const confirmed = await showConfirm(`¿Importar ${rows.length} registros al catálogo de repuestos?`);
+                        const confirmed = await showConfirm(`¿Importar ${rows.length} registros al catálogo de repuestos?\n\nSi ya existen registros anteriores, se recomienda limpiar antes o se añadirán estos nuevos registros.`);
                         if (!confirmed) return;
 
+                        // Convierte fechas de Excel (números seriales como 46196), Date objects o strings
                         const formatDate = (val: any): string => {
-                            if (!val) return '';
-                            if (val instanceof Date) return val.toISOString().slice(0, 10);
-                            return String(val).trim();
+                            if (!val && val !== 0) return '';
+                            if (val instanceof Date) {
+                                if (isNaN(val.getTime())) return '';
+                                const d = String(val.getDate()).padStart(2, '0');
+                                const m = String(val.getMonth() + 1).padStart(2, '0');
+                                const y = val.getFullYear();
+                                return `${d}/${m}/${y}`;
+                            }
+                            // Número serial de Excel (ej. 46196 -> 2026-06-23)
+                            if (typeof val === 'number' || (!isNaN(Number(val)) && !String(val).includes('/') && !String(val).includes('-') && Number(val) > 20000 && Number(val) < 80000)) {
+                                const serial = Number(val);
+                                const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+                                const dateObj = new Date(excelEpoch.getTime() + serial * 86400000);
+                                if (!isNaN(dateObj.getTime())) {
+                                    const d = String(dateObj.getUTCDate()).padStart(2, '0');
+                                    const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+                                    const y = dateObj.getUTCFullYear();
+                                    return `${d}/${m}/${y}`;
+                                }
+                            }
+                            const str = String(val).trim();
+                            // Normalizar formato yyyy-mm-dd a dd/mm/yyyy
+                            if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+                                const parts = str.split('T')[0].split('-');
+                                return `${parts[2]}/${parts[1]}/${parts[0]}`;
+                            }
+                            return str;
                         };
 
                         const batch = writeBatch(db);
@@ -4158,12 +4188,30 @@ export default function App() {
                             batch.set(doc(db, 'spare_parts', id), sp);
                         });
                         await batch.commit();
-                        showToast(`✅ ${rows.length} repuestos importados correctamente.`, 'success', 6000);
+                        showToast(`✅ ${rows.length} repuestos importados con fechas corregidas.`, 'success', 6000);
                     } catch (err: any) {
                         showError(`Error al importar: ${err.message}`);
                     } finally {
                         setCsvImporting(false);
                         e.target.value = '';
+                    }
+                };
+
+                // ── Vaciar base de repuestos para volver a subir limpio ────
+                const handleClearSpareParts = async () => {
+                    if (spareParts.length === 0 || !currentUser) return;
+                    const confirmed = await showConfirm(`⚠ ¿Eliminar TODOS los ${spareParts.length} registros de repuestos actuales para volver a subir el archivo limpio? Esta acción no se puede deshacer.`);
+                    if (!confirmed) return;
+
+                    try {
+                        const batch = writeBatch(db);
+                        spareParts.forEach(sp => {
+                            batch.delete(doc(db, 'spare_parts', sp.id));
+                        });
+                        await batch.commit();
+                        showToast('Base de repuestos vaciada. Ahora puedes importar el archivo limpio.', 'info', 5000);
+                    } catch (err: any) {
+                        showError(`Error al vaciar: ${err.message}`);
                     }
                 };
 
@@ -4206,6 +4254,16 @@ export default function App() {
                                     {csvImporting ? 'Importando...' : 'Importar CSV/Excel'}
                                     <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleCsvImport} disabled={csvImporting}/>
                                 </label>
+                                {/* Limpiar catálogo actual */}
+                                {spareParts.length > 0 && (
+                                    <button 
+                                        onClick={handleClearSpareParts}
+                                        title="Eliminar todos los registros para volver a subir el archivo limpio"
+                                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider text-red-500 hover:text-red-600 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 hover:bg-red-100 transition-all"
+                                    >
+                                        <Trash2 size={13}/> Vaciar base
+                                    </button>
+                                )}
                                 {/* Exportar */}
                                 <button onClick={handleExportSpareParts} disabled={filteredSpareParts.length === 0}
                                     className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all disabled:opacity-40">
@@ -4403,8 +4461,34 @@ export default function App() {
                                                     <td className="px-4 py-3">
                                                         <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">{sp.orden_ge || '—'}</span>
                                                     </td>
-                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">{sp.fecha_pedido || '—'}</td>
-                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">{sp.fecha_instalacion || '—'}</td>
+                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                                        {(() => {
+                                                            const val = sp.fecha_pedido;
+                                                            if (!val) return '—';
+                                                            const num = Number(val);
+                                                            if (!isNaN(num) && num > 20000 && num < 80000 && !String(val).includes('/') && !String(val).includes('-')) {
+                                                                const d = new Date(new Date(Date.UTC(1899, 11, 30)).getTime() + num * 86400000);
+                                                                if (!isNaN(d.getTime())) {
+                                                                    return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+                                                                }
+                                                            }
+                                                            return String(val);
+                                                        })()}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                                        {(() => {
+                                                            const val = sp.fecha_instalacion;
+                                                            if (!val) return '—';
+                                                            const num = Number(val);
+                                                            if (!isNaN(num) && num > 20000 && num < 80000 && !String(val).includes('/') && !String(val).includes('-')) {
+                                                                const d = new Date(new Date(Date.UTC(1899, 11, 30)).getTime() + num * 86400000);
+                                                                if (!isNaN(d.getTime())) {
+                                                                    return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+                                                                }
+                                                            }
+                                                            return String(val);
+                                                        })()}
+                                                    </td>
                                                     <td className="px-4 py-3 text-center">
                                                         <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
                                                             sp.source === 'CSV_IMPORT' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
