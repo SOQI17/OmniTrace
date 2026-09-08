@@ -824,29 +824,33 @@ export default function App() {
           dia: String(d.getUTCDate()).padStart(2, '0')
         };
       }
-      // Formato DD/MM/YYYY o DD/MM/YY
-      if (raw.includes('/')) {
-        const p = raw.split('/');
+      // Formato con '/' o con '-'
+      const separator = raw.includes('/') ? '/' : raw.includes('-') ? '-' : null;
+      if (separator) {
+        const clean = raw.split('T')[0];
+        const p = clean.split(separator);
         if (p.length === 3) {
-          let y = p[2].trim();
+          const p0 = p[0].trim();
+          const p1 = p[1].trim();
+          const p2 = p[2].trim();
+
+          // Si el primer componente es de 4 dígitos o > 31, es YYYY-MM-DD
+          if (p0.length === 4 || (Number(p0) > 31 && Number(p0) < 2100)) {
+            let y = p0.length === 2 ? `20${p0}` : p0;
+            return {
+              anio: y,
+              mes: p1.padStart(2, '0'),
+              dia: p2.padStart(2, '0')
+            };
+          }
+
+          // Si no, es DD-MM-YYYY o DD/MM/YYYY
+          let y = p2;
           if (y.length === 2) y = `20${y}`;
           return {
             anio: y,
-            mes: p[1].trim().padStart(2, '0'),
-            dia: p[0].trim().padStart(2, '0')
-          };
-        }
-      }
-      // Formato YYYY-MM-DD
-      if (raw.includes('-')) {
-        const p = raw.split('T')[0].split('-');
-        if (p.length === 3) {
-          let y = p[0].trim();
-          if (y.length === 2) y = `20${y}`;
-          return {
-            anio: y,
-            mes: p[1].trim().padStart(2, '0'),
-            dia: p[2].trim().padStart(2, '0')
+            mes: p1.padStart(2, '0'),
+            dia: p0.padStart(2, '0')
           };
         }
       }
@@ -4254,23 +4258,31 @@ export default function App() {
                                 }
                             }
                             const str = String(val).trim();
-                            // Si viene formato DD/MM/YY o DD/MM/YYYY (ej: "28/10/25" -> "28/10/2025")
-                            if (str.includes('/')) {
-                                const parts = str.split('/');
+                            // Separar partes si usa '/' o '-'
+                            const separator = str.includes('/') ? '/' : str.includes('-') ? '-' : null;
+                            if (separator) {
+                                const clean = str.split('T')[0];
+                                const parts = clean.split(separator);
                                 if (parts.length === 3) {
-                                    const d = parts[0].trim().padStart(2, '0');
-                                    const m = parts[1].trim().padStart(2, '0');
-                                    let y = parts[2].trim();
-                                    if (y.length === 2) {
-                                        y = `20${y}`;
+                                    const p0 = parts[0].trim();
+                                    const p1 = parts[1].trim();
+                                    const p2 = parts[2].trim();
+
+                                    // Caso 1: YYYY-MM-DD (primer elemento es de 4 dígitos o > 31)
+                                    if (p0.length === 4 || (Number(p0) > 31 && Number(p0) < 2100)) {
+                                        const y = p0.length === 2 ? `20${p0}` : p0;
+                                        const m = p1.padStart(2, '0');
+                                        const d = p2.padStart(2, '0');
+                                        return `${d}/${m}/${y}`;
                                     }
+
+                                    // Caso 2: DD-MM-YYYY o DD/MM/YY (tercer elemento es el año)
+                                    let y = p2;
+                                    if (y.length === 2) y = `20${y}`;
+                                    const d = p0.padStart(2, '0');
+                                    const m = p1.padStart(2, '0');
                                     return `${d}/${m}/${y}`;
                                 }
-                            }
-                            // Normalizar formato yyyy-mm-dd a dd/mm/yyyy
-                            if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-                                const parts = str.split('T')[0].split('-');
-                                return `${parts[2]}/${parts[1]}/${parts[0]}`;
                             }
                             return str;
                         };
@@ -4668,14 +4680,20 @@ export default function App() {
                                                                 }
                                                             }
                                                             const str = String(val).trim();
-                                                            if (str.includes('/')) {
-                                                                const p = str.split('/');
+                                                            const sep = str.includes('/') ? '/' : str.includes('-') ? '-' : null;
+                                                            if (sep) {
+                                                                const p = str.split('T')[0].split(sep);
                                                                 if (p.length === 3) {
-                                                                    const d = p[0].trim().padStart(2, '0');
-                                                                    const m = p[1].trim().padStart(2, '0');
-                                                                    let y = p[2].trim();
+                                                                    const p0 = p[0].trim();
+                                                                    const p1 = p[1].trim();
+                                                                    const p2 = p[2].trim();
+                                                                    if (p0.length === 4 || (Number(p0) > 31 && Number(p0) < 2100)) {
+                                                                        const y = p0.length === 2 ? `20${p0}` : p0;
+                                                                        return `${p2.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
+                                                                    }
+                                                                    let y = p2;
                                                                     if (y.length === 2) y = `20${y}`;
-                                                                    return `${d}/${m}/${y}`;
+                                                                    return `${p0.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
                                                                 }
                                                             }
                                                             return str;
@@ -4693,14 +4711,20 @@ export default function App() {
                                                                 }
                                                             }
                                                             const str = String(val).trim();
-                                                            if (str.includes('/')) {
-                                                                const p = str.split('/');
+                                                            const sep = str.includes('/') ? '/' : str.includes('-') ? '-' : null;
+                                                            if (sep) {
+                                                                const p = str.split('T')[0].split(sep);
                                                                 if (p.length === 3) {
-                                                                    const d = p[0].trim().padStart(2, '0');
-                                                                    const m = p[1].trim().padStart(2, '0');
-                                                                    let y = p[2].trim();
+                                                                    const p0 = p[0].trim();
+                                                                    const p1 = p[1].trim();
+                                                                    const p2 = p[2].trim();
+                                                                    if (p0.length === 4 || (Number(p0) > 31 && Number(p0) < 2100)) {
+                                                                        const y = p0.length === 2 ? `20${p0}` : p0;
+                                                                        return `${p2.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
+                                                                    }
+                                                                    let y = p2;
                                                                     if (y.length === 2) y = `20${y}`;
-                                                                    return `${d}/${m}/${y}`;
+                                                                    return `${p0.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
                                                                 }
                                                             }
                                                             return str;
