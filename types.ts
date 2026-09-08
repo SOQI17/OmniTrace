@@ -162,3 +162,41 @@ classDiagram
     Asset "1" *-- "1" AssetWarehouse
     Asset "1" -- "0..*" AuditLog : history
 `;
+
+// ─── MÓDULO REPUESTOS — Base Instalada ───────────────────────────────────────
+
+export interface SparePart {
+  id: string;
+
+  // Identificación del repuesto
+  pn: string;                    // Part Number
+  descripcion: string;
+  cantidad: number;
+
+  // Destino
+  cliente: string;               // CLIENTE
+  mod: string;                   // MOD (MR, CT, XR, Surgery, etc.)
+  equipo: string;                // Equipo / modelo (Signa Creator, D387T, etc.)
+
+  // Pedido
+  workflow_id: string;           // WF
+  orden_ge: string;              // ORDEN (número de orden GE)
+  condicion: string;             // Compra, Garantía, DOA, FOI, etc.
+  observacion: string;           // OBSERVACION
+
+  // Fechas
+  mes: string;                   // MES (Julio, Agosto, etc.)
+  anio: number;                  // Año
+  fecha_pedido: string;          // Fecha pedido
+  fecha_llegada: string;         // Fecha llegada
+  fecha_despacho: string;        // Fecha Despacho Instalada
+  fecha_egreso: string;          // Egreso
+  fecha_instalacion: string;     // Fecha de instalación
+  fecha_llegada_tentativa: string; // Fecha Llegada tentativa
+
+  // Trazabilidad
+  asset_id?: string;             // Vinculado a un Asset de OmniTrace si aplica
+  created_by: string;
+  created_at: string;
+  source: 'CSV_IMPORT' | 'SOLICITUD' | 'MANUAL'; // Origen del registro
+}

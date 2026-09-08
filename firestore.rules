@@ -55,5 +55,28 @@ service cloud.firestore {
       allow create: if isAuthenticated();
       allow update, delete: if false;
     }
+
+    // ─── Repuestos — Base Instalada ───────────────────────────────────────────
+    // Cualquier usuario autenticado puede leer la base de repuestos.
+    // ADMIN e IMPORTER pueden crear y actualizar (importar CSV, agregar manual).
+    // Solo ADMIN puede eliminar.
+    match /spare_parts/{partId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() || isImporter();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Comentarios por Orden ────────────────────────────────────────────────
+    match /order_comments/{orderId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // ─── Usuarios (lista para ADMIN) ─────────────────────────────────────────
+    // Permitir a ADMIN listar todos los usuarios.
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
   }
 }

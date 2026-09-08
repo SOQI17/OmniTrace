@@ -10,7 +10,8 @@ import {
   UserRole,
   ImportationCosts,
   ImportItem,
-  StoredDocument
+  StoredDocument,
+  SparePart
 } from './types';
 import { AssetLifecycleService } from './services/AssetLifecycleService';
 import { AssetLabelPDF } from './components/AssetLabelPDF';
@@ -80,7 +81,8 @@ import {
   Printer,
   Kanban,
   FilePlus,
-  Upload
+  Upload,
+  Package
 } from 'lucide-react';
 
 // ─── PERMISOS DISPONIBLES ────────────────────────────────────────────────────
@@ -752,7 +754,7 @@ export default function App() {
     if (!document.getElementById('omnitrace-print')) document.head.appendChild(style);
   }, []);
   
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'REQUEST' | 'LOGISTICS' | 'WAREHOUSE' | 'SCANNER' | 'DOCS' | 'RETURNS' | 'ADMIN'>('DASHBOARD');
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'REQUEST' | 'LOGISTICS' | 'WAREHOUSE' | 'SCANNER' | 'DOCS' | 'RETURNS' | 'ADMIN' | 'SPAREPARTS'>('DASHBOARD');
   const [requestMode, setRequestMode] = useState<'MENU' | 'PARTS' | 'EQUIPMENT' | 'TOOLS'>('MENU');
   const [logisticsSubTab, setLogisticsSubTab] = useState<'INITIAL' | 'FINAL' | 'HISTORY'>('INITIAL');
   const [warehouseSubTab, setWarehouseSubTab] = useState<'ENTRY' | 'MOVEMENTS' | 'INVENTORY' | 'REPORTS'>('INVENTORY');
@@ -782,6 +784,16 @@ export default function App() {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [scannedAsset, setScannedAsset] = useState<Asset | null>(null);
+
+  // ─── Repuestos — Base Instalada ───────────────────────────────────────────
+  const [spareParts, setSpareParts] = useState<SparePart[]>([]);
+  const [sparePartsLoading, setSparePartsLoading] = useState(true);
+  const [sparePartsSearch, setSparePartsSearch] = useState('');
+  const [sparePartsFilterCliente, setSparePartsFilterCliente] = useState('');
+  const [sparePartsFilterMod, setSparePartsFilterMod] = useState('');
+  const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
+  const [showSparePartModal, setShowSparePartModal] = useState(false);
+  const [csvImporting, setCsvImporting] = useState(false);
 
   const [managingReturnAsset, setManagingReturnAsset] = useState<Asset | null>(null);
   const [logisticsFilter, setLogisticsFilter] = useState<{ status: string; condicion: string; proveedor: string }>({ status: '', condicion: '', proveedor: '' });
@@ -975,6 +987,21 @@ export default function App() {
     );
     return () => { unsubAssets(); unsubLogs(); };
   }, [currentUser]);
+
+  // ─── Listener Repuestos ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsubSpareParts = onSnapshot(
+      query(collection(db, 'spare_parts'), orderBy('created_at', 'desc')),
+      (snapshot) => {
+        setSpareParts(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as SparePart)));
+        setSparePartsLoading(false);
+      },
+      () => setSparePartsLoading(false)
+    );
+    return () => unsubSpareParts();
+  }, [currentUser]);
+
 
   useEffect(() => {
     if (!selectedAsset) return;
@@ -2110,6 +2137,7 @@ export default function App() {
                 <NavButton active={activeTab==='WAREHOUSE'} onClick={()=>setActiveTab('WAREHOUSE')} icon={<Warehouse size={18}/>} label="3. Bodega" />
                 <NavButton active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode size={18}/>} label="4. Escáner" />
                 <NavButton active={activeTab==='RETURNS'} onClick={()=>setActiveTab('RETURNS')} icon={<RotateCcw size={18}/>} label="5. Retornos" />
+                <NavButton active={activeTab==='SPAREPARTS'} onClick={()=>setActiveTab('SPAREPARTS')} icon={<Package size={18}/>} label="6. Repuestos" />
                 {isAdmin && (
                   <NavButton active={activeTab==='ADMIN'} onClick={()=>setActiveTab('ADMIN')} icon={<Shield size={18}/>} label="Admin" />
                 )}
@@ -2653,14 +2681,14 @@ export default function App() {
                                     value={logisticsFilter.condicion}
                                     onChange={v => setLogisticsFilter(f => ({...f, condicion: v}))}
                                     placeholder="Todas las condiciones"
-                                    options={[...new Set(assets.map(a => a.metadata.condicion).filter(Boolean))].map(c => ({ value: c, label: c }))}
+                                    options={([...new Set(assets.map(a => a.metadata.condicion).filter(Boolean))] as string[]).map(c => ({ value: c, label: c }))}
                                 />
                                 {/* Filter: Proveedor */}
                                 <FilterSelect
                                     value={logisticsFilter.proveedor}
                                     onChange={v => setLogisticsFilter(f => ({...f, proveedor: v}))}
                                     placeholder="Todos los proveedores"
-                                    options={[...new Set(assets.map(a => a.metadata.provider).filter(Boolean))].sort().map(p => ({ value: p, label: p }))}
+                                    options={([...new Set(assets.map(a => a.metadata.provider).filter(Boolean))] as string[]).sort().map(p => ({ value: p, label: p }))}
                                 />
                                 {(logisticsFilter.status || logisticsFilter.condicion || logisticsFilter.proveedor) && (
                                     <button onClick={() => setLogisticsFilter({ status: '', condicion: '', proveedor: '' })}
@@ -3986,8 +4014,432 @@ export default function App() {
                     )}
                 </div>
             )}
+                    {/* ── MÓDULO REPUESTOS ── */}
+            {activeTab === 'SPAREPARTS' && (() => {
+                // ── Lógica de filtrado ─────────────────────────────────────
+                const filteredSpareParts = spareParts.filter(sp => {
+                    const search = sparePartsSearch.toLowerCase();
+                    const matchSearch = !search ||
+                        sp.pn?.toLowerCase().includes(search) ||
+                        sp.descripcion?.toLowerCase().includes(search) ||
+                        sp.cliente?.toLowerCase().includes(search) ||
+                        sp.orden_ge?.toLowerCase().includes(search);
+                    const matchCliente = !sparePartsFilterCliente || sp.cliente === sparePartsFilterCliente;
+                    const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
+                    const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
+                    return matchSearch && matchCliente && matchMod && matchCondicion;
+                });
+
+                // ── KPIs ───────────────────────────────────────────────────
+                const uniqueClientes = [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))];
+                const uniqueMods = [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))];
+                const uniqueCondiciones = [...new Set(spareParts.map(sp => sp.condicion).filter(Boolean))];
+                const totalUnidades = spareParts.reduce((acc, sp) => acc + (Number(sp.cantidad) || 1), 0);
+
+                // ── Importar CSV / Excel ───────────────────────────────────
+                const handleCsvImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+                    if (!e.target.files?.[0] || !currentUser) return;
+                    const file = e.target.files[0];
+                    setCsvImporting(true);
+                    try {
+                        const arrayBuffer = await file.arrayBuffer();
+                        const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+                        const ws = wb.Sheets[wb.SheetNames[0]];
+                        const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+                        if (rows.length === 0) { showToast('El archivo está vacío.', 'error'); return; }
+
+                        const confirmed = await showConfirm(`¿Importar ${rows.length} registros al catálogo de repuestos?`);
+                        if (!confirmed) return;
+
+                        const formatDate = (val: any): string => {
+                            if (!val) return '';
+                            if (val instanceof Date) return val.toISOString().slice(0, 10);
+                            return String(val).trim();
+                        };
+
+                        const batch = writeBatch(db);
+                        rows.forEach(row => {
+                            const id = generateUUID();
+                            const sp: Omit<SparePart, 'id'> = {
+                                pn:          String(row['P/N'] || row['PN'] || row['pn'] || '').trim(),
+                                descripcion: String(row['DESCRIPCIÓN'] || row['DESCRIPCION'] || row['Descripción'] || '').trim(),
+                                cantidad:    Number(row['CANTIDAD'] || row['Cantidad'] || 1),
+                                cliente:     String(row['CLIENTE'] || row['Cliente'] || '').trim(),
+                                mod:         String(row['MOD'] || row['Mod'] || '').trim(),
+                                equipo:      String(row['Equipo'] || row['EQUIPO'] || '').trim(),
+                                workflow_id: String(row['WF'] || row['Wf'] || '').trim(),
+                                orden_ge:    String(row['ORDEN'] || row['Orden'] || '').trim(),
+                                condicion:   String(row['OBSERVACION'] || row['Observacion'] || '').trim(),
+                                observacion: String(row['OBSERVACION'] || row['Observacion'] || '').trim(),
+                                mes:         String(row['MES'] || row['Mes'] || '').trim(),
+                                anio:        Number(row['Año'] || row['AÑO'] || row['anio'] || new Date().getFullYear()),
+                                fecha_pedido:            formatDate(row['Fecha pedido'] || row['FECHA PEDIDO']),
+                                fecha_llegada:           formatDate(row['Fecha llegada'] || row['FECHA LLEGADA']),
+                                fecha_despacho:          formatDate(row['Fecha Despacho Instalada'] || row['FECHA DESPACHO']),
+                                fecha_egreso:            formatDate(row['Egreso'] || row['EGRESO']),
+                                fecha_instalacion:       formatDate(row['Fecha de instalación'] || row['FECHA INSTALACION']),
+                                fecha_llegada_tentativa: formatDate(row['Fecha Llegada tentativa'] || row['FECHA LLEGADA TENTATIVA']),
+                                created_by: currentUser.name,
+                                created_at: new Date().toISOString(),
+                                source: 'CSV_IMPORT',
+                            };
+                            batch.set(doc(db, 'spare_parts', id), sp);
+                        });
+                        await batch.commit();
+                        showToast(`✅ ${rows.length} repuestos importados correctamente.`, 'success', 6000);
+                    } catch (err: any) {
+                        showError(`Error al importar: ${err.message}`);
+                    } finally {
+                        setCsvImporting(false);
+                        e.target.value = '';
+                    }
+                };
+
+                // ── Exportar Excel ─────────────────────────────────────────
+                const handleExportSpareParts = () => {
+                    const rows = filteredSpareParts.map(sp => ({
+                        'P/N': sp.pn, 'DESCRIPCIÓN': sp.descripcion, 'CANTIDAD': sp.cantidad,
+                        'CLIENTE': sp.cliente, 'MOD': sp.mod, 'EQUIPO': sp.equipo,
+                        'WF': sp.workflow_id, 'ORDEN GE': sp.orden_ge, 'CONDICIÓN': sp.condicion,
+                        'OBSERVACIÓN': sp.observacion, 'MES': sp.mes, 'AÑO': sp.anio,
+                        'FECHA PEDIDO': sp.fecha_pedido, 'FECHA LLEGADA': sp.fecha_llegada,
+                        'FECHA DESPACHO': sp.fecha_despacho, 'EGRESO': sp.fecha_egreso,
+                        'FECHA INSTALACIÓN': sp.fecha_instalacion,
+                        'LLEGADA TENTATIVA': sp.fecha_llegada_tentativa,
+                        'ORIGEN': sp.source,
+                    }));
+                    const wb = XLSX.utils.book_new();
+                    const ws = XLSX.utils.json_to_sheet(rows);
+                    XLSX.utils.book_append_sheet(wb, ws, 'REPUESTOS');
+                    XLSX.writeFile(wb, `BASE_REPUESTOS_${new Date().toISOString().slice(0,10)}.xlsx`);
+                    showToast('Excel exportado correctamente.', 'success');
+                };
+
+                return (
+                    <div className="space-y-6 animate-fadeIn">
+                        {/* ── Header ── */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                                <h2 className="text-2xl font-black text-slate-800 dark:text-slate-100 flex items-center gap-3">
+                                    <Package size={28} className="text-emerald-500"/> Base Instalada de Repuestos
+                                </h2>
+                                <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
+                                    Historial de repuestos instalados en clientes. Se actualiza automáticamente con cada solicitud.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                {/* Importar CSV */}
+                                <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider cursor-pointer transition-all border ${csvImporting ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 border-slate-200 dark:border-slate-600' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400'}`}>
+                                    {csvImporting ? <Loader2 size={14} className="animate-spin"/> : <Upload size={14}/>}
+                                    {csvImporting ? 'Importando...' : 'Importar CSV/Excel'}
+                                    <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleCsvImport} disabled={csvImporting}/>
+                                </label>
+                                {/* Exportar */}
+                                <button onClick={handleExportSpareParts} disabled={filteredSpareParts.length === 0}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all disabled:opacity-40">
+                                    <Download size={14}/> Exportar Excel
+                                </button>
+                                {/* Nuevo manual */}
+                                <button onClick={() => setShowSparePartModal(true)}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-sm">
+                                    <Plus size={14}/> Nuevo registro
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* ── KPIs ── */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex items-start justify-between">
+                                <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Total Registros</p>
+                                    <h3 className="text-3xl font-black text-slate-900 dark:text-white">{spareParts.length.toLocaleString()}</h3>
+                                    <p className="text-[10px] text-slate-400 mt-1">{totalUnidades.toLocaleString()} unidades</p>
+                                </div>
+                                <div className="p-2.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg"><Package size={20} className="text-emerald-500"/></div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex items-start justify-between">
+                                <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Clientes</p>
+                                    <h3 className="text-3xl font-black text-slate-900 dark:text-white">{uniqueClientes.length}</h3>
+                                    <p className="text-[10px] text-slate-400 mt-1">únicos en base</p>
+                                </div>
+                                <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded-lg"><Users size={20} className="text-blue-500"/></div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex items-start justify-between">
+                                <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Modalidades</p>
+                                    <h3 className="text-3xl font-black text-slate-900 dark:text-white">{uniqueMods.length}</h3>
+                                    <p className="text-[10px] text-slate-400 mt-1">{uniqueMods.slice(0,3).join(', ')}</p>
+                                </div>
+                                <div className="p-2.5 bg-purple-50 dark:bg-purple-900/20 rounded-lg"><Cpu size={20} className="text-purple-500"/></div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex items-start justify-between">
+                                <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Mostrando</p>
+                                    <h3 className="text-3xl font-black text-slate-900 dark:text-white">{filteredSpareParts.length.toLocaleString()}</h3>
+                                    <p className="text-[10px] text-slate-400 mt-1">con filtros actuales</p>
+                                </div>
+                                <div className="p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg"><Database size={20} className="text-amber-500"/></div>
+                            </div>
+                        </div>
+
+                        {/* ── Filtros ── */}
+                        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+                            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex flex-wrap gap-3 items-center">
+                                {/* Búsqueda */}
+                                <div className="relative flex-1 min-w-[200px]">
+                                    <Search size={14} className="absolute left-3 top-2.5 text-slate-400"/>
+                                    <input
+                                        type="text"
+                                        placeholder="Buscar P/N, descripción, cliente, orden..."
+                                        value={sparePartsSearch}
+                                        onChange={e => setSparePartsSearch(e.target.value)}
+                                        className="w-full pl-9 pr-4 py-2 text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
+                                    />
+                                    {sparePartsSearch && <button onClick={() => setSparePartsSearch('')} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"><X size={14}/></button>}
+                                </div>
+                                {/* Cliente */}
+                                <FilterSelect value={sparePartsFilterCliente} onChange={setSparePartsFilterCliente} placeholder="Todos los clientes"
+                                    options={(uniqueClientes as string[]).sort().map(c => ({ value: c, label: c }))} />
+                                {/* MOD */}
+                                <FilterSelect value={sparePartsFilterMod} onChange={setSparePartsFilterMod} placeholder="Todas las MOD"
+                                    options={(uniqueMods as string[]).sort().map(m => ({ value: m, label: m }))} />
+                                {/* Condición */}
+                                <FilterSelect value={sparePartsFilterCondicion} onChange={setSparePartsFilterCondicion} placeholder="Todas las condiciones"
+                                    options={(uniqueCondiciones as string[]).sort().map(c => ({ value: c, label: c }))} />
+                                {(sparePartsSearch || sparePartsFilterCliente || sparePartsFilterMod || sparePartsFilterCondicion) && (
+                                    <button onClick={() => { setSparePartsSearch(''); setSparePartsFilterCliente(''); setSparePartsFilterMod(''); setSparePartsFilterCondicion(''); }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
+                                        <X size={11}/> Limpiar
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* ── Tabla ── */}
+                            <div className="overflow-x-auto">
+                                {sparePartsLoading ? (
+                                    <div className="p-12 text-center text-slate-400">
+                                        <Loader2 size={32} className="animate-spin mx-auto mb-3 text-emerald-400"/>
+                                        <p className="text-xs font-black uppercase tracking-widest">Cargando base de repuestos...</p>
+                                    </div>
+                                ) : filteredSpareParts.length === 0 ? (
+                                    <div className="p-12 text-center text-slate-400">
+                                        <Package size={48} className="mx-auto mb-4 opacity-20"/>
+                                        <p className="font-black uppercase text-xs tracking-widest mb-2">
+                                            {spareParts.length === 0 ? 'No hay repuestos registrados' : 'Sin resultados para los filtros aplicados'}
+                                        </p>
+                                        {spareParts.length === 0 && (
+                                            <p className="text-[11px] text-slate-500 mt-2 max-w-xs mx-auto">
+                                                Importa tu base de datos desde un archivo Excel/CSV usando el botón "Importar CSV/Excel"
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <table className="w-full text-xs text-left min-w-[1100px]">
+                                        <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 uppercase font-black tracking-widest text-[10px] border-b border-slate-100 dark:border-slate-700">
+                                            <tr>
+                                                <th className="px-4 py-3">P/N</th>
+                                                <th className="px-4 py-3">Descripción</th>
+                                                <th className="px-4 py-3">Cliente</th>
+                                                <th className="px-4 py-3 text-center">MOD</th>
+                                                <th className="px-4 py-3">Equipo</th>
+                                                <th className="px-4 py-3 text-center">Cant.</th>
+                                                <th className="px-4 py-3">Condición</th>
+                                                <th className="px-4 py-3">Orden GE</th>
+                                                <th className="px-4 py-3">F. Pedido</th>
+                                                <th className="px-4 py-3">F. Instalación</th>
+                                                <th className="px-4 py-3 text-center">Origen</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                                            {filteredSpareParts.map(sp => (
+                                                <tr key={sp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+                                                    <td className="px-4 py-3">
+                                                        <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">{sp.pn || '—'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 max-w-[200px]">
+                                                        <span className="text-slate-700 dark:text-slate-300 line-clamp-2" title={sp.descripcion}>{sp.descripcion || '—'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className="text-slate-600 dark:text-slate-400 font-medium truncate max-w-[150px] block" title={sp.cliente}>{sp.cliente || '—'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
+                                                            {sp.mod || '—'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className="text-slate-500 dark:text-slate-400 truncate max-w-[120px] block" title={sp.equipo}>{sp.equipo || '—'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <span className="font-bold text-slate-800 dark:text-slate-200">{sp.cantidad ?? 1}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                                            sp.condicion?.toLowerCase().includes('garantia') || sp.condicion?.toLowerCase().includes('garantía')
+                                                                ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'
+                                                                : sp.condicion?.toLowerCase().includes('doa')
+                                                                ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+                                                                : sp.condicion?.toLowerCase().includes('compra')
+                                                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400'
+                                                                : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                                                        }`}>{sp.condicion || '—'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">{sp.orden_ge || '—'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">{sp.fecha_pedido || '—'}</td>
+                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">{sp.fecha_instalacion || '—'}</td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                                            sp.source === 'CSV_IMPORT' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
+                                                            : sp.source === 'SOLICITUD' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400'
+                                                            : 'bg-slate-100 text-slate-500'
+                                                        }`}>
+                                                            {sp.source === 'CSV_IMPORT' ? 'CSV' : sp.source === 'SOLICITUD' ? 'Solicitud' : 'Manual'}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+
+                            {/* Footer con conteo */}
+                            {filteredSpareParts.length > 0 && (
+                                <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                        Mostrando {filteredSpareParts.length} de {spareParts.length} registros
+                                    </span>
+                                    <span className="text-[10px] text-slate-400">
+                                        Última importación: {spareParts[0]?.created_at ? new Date(spareParts[0].created_at).toLocaleDateString('es-ES') : '—'}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ── Modal Nuevo Registro Manual ── */}
+                        {showSparePartModal && (
+                            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                                <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden animate-fadeIn">
+                                    <div className="bg-emerald-600 p-5 flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <Package size={22} className="text-white"/>
+                                            <h3 className="font-black text-white uppercase tracking-wider text-sm">Nuevo Repuesto Manual</h3>
+                                        </div>
+                                        <button onClick={() => setShowSparePartModal(false)} className="text-white/70 hover:text-white"><X size={20}/></button>
+                                    </div>
+                                    <form onSubmit={async (e) => {
+                                        e.preventDefault();
+                                        if (!currentUser) return;
+                                        const fd = new FormData(e.target as HTMLFormElement);
+                                        const id = generateUUID();
+                                        const sp: Omit<SparePart, 'id'> = {
+                                            pn: fd.get('pn') as string,
+                                            descripcion: fd.get('descripcion') as string,
+                                            cantidad: Number(fd.get('cantidad')),
+                                            cliente: fd.get('cliente') as string,
+                                            mod: fd.get('mod') as string,
+                                            equipo: fd.get('equipo') as string,
+                                            workflow_id: fd.get('workflow_id') as string || '',
+                                            orden_ge: fd.get('orden_ge') as string || '',
+                                            condicion: fd.get('condicion') as string,
+                                            observacion: fd.get('observacion') as string || '',
+                                            mes: new Date().toLocaleString('es-ES', { month: 'long' }),
+                                            anio: new Date().getFullYear(),
+                                            fecha_pedido: fd.get('fecha_pedido') as string || '',
+                                            fecha_llegada: '',
+                                            fecha_despacho: fd.get('fecha_instalacion') as string || '',
+                                            fecha_egreso: '',
+                                            fecha_instalacion: fd.get('fecha_instalacion') as string || '',
+                                            fecha_llegada_tentativa: '',
+                                            created_by: currentUser.name,
+                                            created_at: new Date().toISOString(),
+                                            source: 'MANUAL',
+                                        };
+                                        await doc(db, 'spare_parts', id);
+                                        await setDoc(doc(db, 'spare_parts', id), sp);
+                                        showToast('Repuesto registrado correctamente.', 'success');
+                                        setShowSparePartModal(false);
+                                    }} className="p-6 grid grid-cols-2 gap-4">
+                                        <div className="col-span-2 grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">P/N *</label>
+                                                <input required name="pn" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none" placeholder="5796592-60"/>
+                                            </div>
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Cantidad</label>
+                                                <input name="cantidad" type="number" min="1" defaultValue="1" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none"/>
+                                            </div>
+                                        </div>
+                                        <div className="col-span-2">
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Descripción *</label>
+                                            <input required name="descripcion" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none" placeholder="ORPG-60 PWA"/>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Cliente *</label>
+                                            <input required name="cliente" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none" placeholder="Hospital José Carrasco"/>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">MOD (Modalidad)</label>
+                                            <select name="mod" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none">
+                                                <option value="">Seleccionar...</option>
+                                                {['CT','MR','XR','Surgery','OEC','VCT','NMR'].map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Equipo / Modelo</label>
+                                            <input name="equipo" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none" placeholder="Signa Creator, D387T..."/>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Condición</label>
+                                            <select name="condicion" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none">
+                                                <option value="COMPRA">Compra</option>
+                                                <option value="GARANTIA">Garantía</option>
+                                                <option value="DOA">DOA</option>
+                                                <option value="FOI">FOI</option>
+                                                <option value="CONTRATO_SERVICIO">Contrato Servicio</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Orden GE</label>
+                                            <input name="orden_ge" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none" placeholder="GE-0915"/>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Fecha Pedido</label>
+                                            <input name="fecha_pedido" type="date" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none"/>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Fecha Instalación</label>
+                                            <input name="fecha_instalacion" type="date" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none"/>
+                                        </div>
+                                        <div className="col-span-2">
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Observación</label>
+                                            <input name="observacion" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none" placeholder="Notas adicionales..."/>
+                                        </div>
+                                        <div className="col-span-2 flex justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-700">
+                                            <button type="button" onClick={() => setShowSparePartModal(false)}
+                                                className="px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                                                Cancelar
+                                            </button>
+                                            <button type="submit"
+                                                className="px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-2">
+                                                <Save size={14}/> Guardar Repuesto
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            })()}
+
                     {/* ── PANEL DE ADMINISTRACIÓN ── */}
             {activeTab === 'ADMIN' && isAdmin && (
+
                 <div className="space-y-6 animate-fadeIn w-full">
 
                     {/* Header */}
