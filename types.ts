@@ -182,6 +182,7 @@ export interface SparePart {
   workflow_id: string;           // WF
   orden_ge: string;              // ORDEN (número de orden GE)
   condicion: string;             // Compra, Garantía, DOA, FOI, etc.
+  precio?: number;               // Precio extraído (ej: 13887.20 de CONTRATO SERVICIO 13887,20$)
   observacion: string;           // OBSERVACION
 
   // Fechas

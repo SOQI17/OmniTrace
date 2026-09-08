@@ -791,10 +791,10 @@ export default function App() {
   const [sparePartsLoading, setSparePartsLoading] = useState(true);
   const [sparePartsSearch, setSparePartsSearch] = useState('');
   const [sparePartsDebouncedSearch, setSparePartsDebouncedSearch] = useState('');
-  const [sparePartsFilterCliente, setSparePartsFilterCliente] = useState('');
+  const [sparePartsFilterFecha, setSparePartsFilterFecha] = useState('');
   const [sparePartsFilterMod, setSparePartsFilterMod] = useState('');
   const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
-  const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'pn_az' | 'pn_za' | 'cliente_az'>('newest');
+  const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az'>('newest');
   const [showSparePartModal, setShowSparePartModal] = useState(false);
   const [csvImporting, setCsvImporting] = useState(false);
 
@@ -815,10 +815,10 @@ export default function App() {
         sp.descripcion?.toLowerCase().includes(search) ||
         sp.cliente?.toLowerCase().includes(search) ||
         sp.orden_ge?.toLowerCase().includes(search);
-      const matchCliente = !sparePartsFilterCliente || sp.cliente === sparePartsFilterCliente;
+      const matchFecha = !sparePartsFilterFecha || sp.fecha_pedido === sparePartsFilterFecha;
       const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
       const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
-      return matchSearch && matchCliente && matchMod && matchCondicion;
+      return matchSearch && matchFecha && matchMod && matchCondicion;
     });
 
     const parseDateValue = (sp: SparePart): number => {
@@ -855,6 +855,10 @@ export default function App() {
           return parseDateValue(b) - parseDateValue(a);
         case 'oldest':
           return parseDateValue(a) - parseDateValue(b);
+        case 'ge_newest':
+          return (b.orden_ge || '').localeCompare(a.orden_ge || '', undefined, { numeric: true, sensitivity: 'base' });
+        case 'ge_oldest':
+          return (a.orden_ge || '').localeCompare(b.orden_ge || '', undefined, { numeric: true, sensitivity: 'base' });
         case 'pn_az':
           return (a.pn || '').localeCompare(b.pn || '');
         case 'pn_za':
@@ -865,8 +869,9 @@ export default function App() {
           return 0;
       }
     });
-  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterCliente, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsSort]);
+  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterFecha, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsSort]);
 
+  const uniqueFechasPedido = React.useMemo(() => [...new Set(spareParts.map(sp => sp.fecha_pedido).filter(Boolean))], [spareParts]);
   const uniqueClientes = React.useMemo(() => [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))], [spareParts]);
   const uniqueMods = React.useMemo(() => [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))], [spareParts]);
   const uniqueCondiciones = React.useMemo(() => [...new Set(spareParts.map(sp => sp.condicion).filter(Boolean))], [spareParts]);
@@ -4162,6 +4167,28 @@ export default function App() {
                         const batch = writeBatch(db);
                         rows.forEach(row => {
                             const id = generateUUID();
+                            const rawObs = String(row['OBSERVACION'] || row['Observacion'] || '').trim();
+                            
+                            // Extraer precio si viene dentro de observación o condición (ej: "COMPRA 5233.06", "13887,20$", "CS 421.4", "544,74 GARANTÍA")
+                            let extractedPrice: number | undefined = undefined;
+                            const priceMatch = rawObs.match(/(\d+(?:[.,]\d{1,2})?)\s*(?:\$|USD)?/);
+                            if (priceMatch) {
+                                const numCandidate = parseFloat(priceMatch[1].replace(',', '.'));
+                                if (!isNaN(numCandidate) && numCandidate > 0) {
+                                    extractedPrice = numCandidate;
+                                }
+                            }
+
+                            // Limpiar la condición para que no quede con el número mezclado
+                            let cleanCondition = rawObs;
+                            if (extractedPrice !== undefined) {
+                                cleanCondition = rawObs
+                                    .replace(/[\d.,]+\s*\$?/g, '')
+                                    .replace(/\bUSD\b/gi, '')
+                                    .trim();
+                                if (!cleanCondition) cleanCondition = 'COMPRA';
+                            }
+
                             const sp: Omit<SparePart, 'id'> = {
                                 pn:          String(row['P/N'] || row['PN'] || row['pn'] || '').trim(),
                                 descripcion: String(row['DESCRIPCIÓN'] || row['DESCRIPCION'] || row['Descripción'] || '').trim(),
@@ -4171,8 +4198,9 @@ export default function App() {
                                 equipo:      String(row['Equipo'] || row['EQUIPO'] || '').trim(),
                                 workflow_id: String(row['WF'] || row['Wf'] || '').trim(),
                                 orden_ge:    String(row['ORDEN'] || row['Orden'] || '').trim(),
-                                condicion:   String(row['OBSERVACION'] || row['Observacion'] || '').trim(),
-                                observacion: String(row['OBSERVACION'] || row['Observacion'] || '').trim(),
+                                condicion:   cleanCondition || '—',
+                                precio:      extractedPrice,
+                                observacion: rawObs,
                                 mes:         String(row['MES'] || row['Mes'] || '').trim(),
                                 anio:        Number(row['Año'] || row['AÑO'] || row['anio'] || new Date().getFullYear()),
                                 fecha_pedido:            formatDate(row['Fecha pedido'] || row['FECHA PEDIDO']),
@@ -4221,6 +4249,7 @@ export default function App() {
                         'P/N': sp.pn, 'DESCRIPCIÓN': sp.descripcion, 'CANTIDAD': sp.cantidad,
                         'CLIENTE': sp.cliente, 'MOD': sp.mod, 'EQUIPO': sp.equipo,
                         'WF': sp.workflow_id, 'ORDEN GE': sp.orden_ge, 'CONDICIÓN': sp.condicion,
+                        'PRECIO': sp.precio !== undefined ? sp.precio : '',
                         'OBSERVACIÓN': sp.observacion, 'MES': sp.mes, 'AÑO': sp.anio,
                         'FECHA PEDIDO': sp.fecha_pedido, 'FECHA LLEGADA': sp.fecha_llegada,
                         'FECHA DESPACHO': sp.fecha_despacho, 'EGRESO': sp.fecha_egreso,
@@ -4340,24 +4369,26 @@ export default function App() {
                                         onChange={e => setSparePartsSort(e.target.value as any)}
                                         className="text-xs font-semibold px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg dark:text-slate-200 outline-none focus:ring-2 focus:ring-emerald-400"
                                     >
-                                        <option value="newest">📅 Más reciente primero</option>
-                                        <option value="oldest">📅 Más antiguo primero</option>
+                                        <option value="newest">📅 F. Pedido más reciente</option>
+                                        <option value="oldest">📅 F. Pedido más antigua</option>
+                                        <option value="ge_newest">🔢 Orden GE más reciente</option>
+                                        <option value="ge_oldest">🔢 Orden GE más antigua</option>
                                         <option value="pn_az">🔤 P/N (A - Z)</option>
                                         <option value="pn_za">🔤 P/N (Z - A)</option>
                                         <option value="cliente_az">🏢 Cliente (A - Z)</option>
                                     </select>
                                 </div>
-                                {/* Cliente */}
-                                <FilterSelect value={sparePartsFilterCliente} onChange={setSparePartsFilterCliente} placeholder="Todos los clientes"
-                                    options={(uniqueClientes as string[]).sort().map(c => ({ value: c, label: c }))} />
+                                {/* Filtro por Fecha de Pedido */}
+                                <FilterSelect value={sparePartsFilterFecha} onChange={setSparePartsFilterFecha} placeholder="Todas las fechas pedido"
+                                    options={(uniqueFechasPedido as string[]).sort().map(f => ({ value: f, label: f }))} />
                                 {/* MOD */}
                                 <FilterSelect value={sparePartsFilterMod} onChange={setSparePartsFilterMod} placeholder="Todas las MOD"
                                     options={(uniqueMods as string[]).sort().map(m => ({ value: m, label: m }))} />
                                 {/* Condición */}
                                 <FilterSelect value={sparePartsFilterCondicion} onChange={setSparePartsFilterCondicion} placeholder="Todas las condiciones"
                                     options={(uniqueCondiciones as string[]).sort().map(c => ({ value: c, label: c }))} />
-                                {(sparePartsSearch || sparePartsFilterCliente || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsSort !== 'newest') && (
-                                    <button onClick={() => { setSparePartsSearch(''); setSparePartsDebouncedSearch(''); setSparePartsFilterCliente(''); setSparePartsFilterMod(''); setSparePartsFilterCondicion(''); setSparePartsSort('newest'); }}
+                                {(sparePartsSearch || sparePartsFilterFecha || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsSort !== 'newest') && (
+                                    <button onClick={() => { setSparePartsSearch(''); setSparePartsDebouncedSearch(''); setSparePartsFilterFecha(''); setSparePartsFilterMod(''); setSparePartsFilterCondicion(''); setSparePartsSort('newest'); }}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
                                         <X size={11}/> Limpiar
                                     </button>
@@ -4410,7 +4441,16 @@ export default function App() {
                                                 <th className="px-4 py-3">Equipo</th>
                                                 <th className="px-4 py-3 text-center">Cant.</th>
                                                 <th className="px-4 py-3">Condición</th>
-                                                <th className="px-4 py-3">Orden GE</th>
+                                                <th className="px-4 py-3 text-right">Precio (USD)</th>
+                                                <th 
+                                                    className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
+                                                    onClick={() => setSparePartsSort(s => s === 'ge_newest' ? 'ge_oldest' : 'ge_newest')}
+                                                    title="Ordenar por Orden GE"
+                                                >
+                                                    <span className="flex items-center gap-1">
+                                                        Orden GE {sparePartsSort === 'ge_newest' ? '▼' : sparePartsSort === 'ge_oldest' ? '▲' : ''}
+                                                    </span>
+                                                </th>
                                                 <th 
                                                     className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
                                                     onClick={() => setSparePartsSort(s => s === 'newest' ? 'oldest' : 'newest')}
@@ -4457,6 +4497,15 @@ export default function App() {
                                                                 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400'
                                                                 : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
                                                         }`}>{sp.condicion || '—'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right">
+                                                        {sp.precio !== undefined ? (
+                                                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-xs">
+                                                                ${sp.precio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-400 text-[10px]">—</span>
+                                                        )}
                                                     </td>
                                                     <td className="px-4 py-3">
                                                         <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">{sp.orden_ge || '—'}</span>
