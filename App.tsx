@@ -824,12 +824,14 @@ export default function App() {
           dia: String(d.getUTCDate()).padStart(2, '0')
         };
       }
-      // Formato DD/MM/YYYY
+      // Formato DD/MM/YYYY o DD/MM/YY
       if (raw.includes('/')) {
         const p = raw.split('/');
         if (p.length === 3) {
+          let y = p[2].trim();
+          if (y.length === 2) y = `20${y}`;
           return {
-            anio: p[2].trim(),
+            anio: y,
             mes: p[1].trim().padStart(2, '0'),
             dia: p[0].trim().padStart(2, '0')
           };
@@ -839,16 +841,20 @@ export default function App() {
       if (raw.includes('-')) {
         const p = raw.split('T')[0].split('-');
         if (p.length === 3) {
+          let y = p[0].trim();
+          if (y.length === 2) y = `20${y}`;
           return {
-            anio: p[0].trim(),
+            anio: y,
             mes: p[1].trim().padStart(2, '0'),
             dia: p[2].trim().padStart(2, '0')
           };
         }
       }
     }
+    let fallbackAnio = sp.anio ? String(sp.anio) : '';
+    if (fallbackAnio.length === 2) fallbackAnio = `20${fallbackAnio}`;
     return {
-      anio: sp.anio ? String(sp.anio) : '',
+      anio: fallbackAnio,
       mes: '',
       dia: ''
     };
@@ -4248,6 +4254,19 @@ export default function App() {
                                 }
                             }
                             const str = String(val).trim();
+                            // Si viene formato DD/MM/YY o DD/MM/YYYY (ej: "28/10/25" -> "28/10/2025")
+                            if (str.includes('/')) {
+                                const parts = str.split('/');
+                                if (parts.length === 3) {
+                                    const d = parts[0].trim().padStart(2, '0');
+                                    const m = parts[1].trim().padStart(2, '0');
+                                    let y = parts[2].trim();
+                                    if (y.length === 2) {
+                                        y = `20${y}`;
+                                    }
+                                    return `${d}/${m}/${y}`;
+                                }
+                            }
                             // Normalizar formato yyyy-mm-dd a dd/mm/yyyy
                             if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
                                 const parts = str.split('T')[0].split('-');
@@ -4648,7 +4667,18 @@ export default function App() {
                                                                     return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
                                                                 }
                                                             }
-                                                            return String(val);
+                                                            const str = String(val).trim();
+                                                            if (str.includes('/')) {
+                                                                const p = str.split('/');
+                                                                if (p.length === 3) {
+                                                                    const d = p[0].trim().padStart(2, '0');
+                                                                    const m = p[1].trim().padStart(2, '0');
+                                                                    let y = p[2].trim();
+                                                                    if (y.length === 2) y = `20${y}`;
+                                                                    return `${d}/${m}/${y}`;
+                                                                }
+                                                            }
+                                                            return str;
                                                         })()}
                                                     </td>
                                                     <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
@@ -4662,7 +4692,18 @@ export default function App() {
                                                                     return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
                                                                 }
                                                             }
-                                                            return String(val);
+                                                            const str = String(val).trim();
+                                                            if (str.includes('/')) {
+                                                                const p = str.split('/');
+                                                                if (p.length === 3) {
+                                                                    const d = p[0].trim().padStart(2, '0');
+                                                                    const m = p[1].trim().padStart(2, '0');
+                                                                    let y = p[2].trim();
+                                                                    if (y.length === 2) y = `20${y}`;
+                                                                    return `${d}/${m}/${y}`;
+                                                                }
+                                                            }
+                                                            return str;
                                                         })()}
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
