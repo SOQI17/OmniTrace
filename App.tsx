@@ -4281,7 +4281,7 @@ export default function App() {
                                 if (!cleanCondition) cleanCondition = 'COMPRA';
                             }
 
-                            const sp: Omit<SparePart, 'id'> = {
+                            const sp: any = {
                                 pn:          String(row['P/N'] || row['PN'] || row['pn'] || '').trim(),
                                 descripcion: String(row['DESCRIPCIÓN'] || row['DESCRIPCION'] || row['Descripción'] || '').trim(),
                                 cantidad:    Number(row['CANTIDAD'] || row['Cantidad'] || 1),
@@ -4291,7 +4291,6 @@ export default function App() {
                                 workflow_id: String(row['WF'] || row['Wf'] || '').trim(),
                                 orden_ge:    String(row['ORDEN'] || row['Orden'] || '').trim(),
                                 condicion:   cleanCondition || '—',
-                                precio:      extractedPrice,
                                 observacion: rawObs,
                                 mes:         String(row['MES'] || row['Mes'] || '').trim(),
                                 anio:        Number(row['Año'] || row['AÑO'] || row['anio'] || new Date().getFullYear()),
@@ -4305,6 +4304,9 @@ export default function App() {
                                 created_at: new Date().toISOString(),
                                 source: 'CSV_IMPORT',
                             };
+                            if (extractedPrice !== undefined) {
+                                sp.precio = extractedPrice;
+                            }
                             batch.set(doc(db, 'spare_parts', id), sp);
                         });
                         await batch.commit();
