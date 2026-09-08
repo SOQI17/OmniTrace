@@ -806,6 +806,67 @@ export default function App() {
     sparePartsSearchTimerRef.current = setTimeout(() => setSparePartsDebouncedSearch(value), 250);
   };
 
+  // ─── Repuestos: Lógica de filtrado + ordenamiento (a nivel superior del componente) ───
+  const filteredSpareParts = React.useMemo(() => {
+    const search = sparePartsDebouncedSearch.toLowerCase();
+    const filtered = spareParts.filter(sp => {
+      const matchSearch = !search ||
+        sp.pn?.toLowerCase().includes(search) ||
+        sp.descripcion?.toLowerCase().includes(search) ||
+        sp.cliente?.toLowerCase().includes(search) ||
+        sp.orden_ge?.toLowerCase().includes(search);
+      const matchCliente = !sparePartsFilterCliente || sp.cliente === sparePartsFilterCliente;
+      const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
+      const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
+      return matchSearch && matchCliente && matchMod && matchCondicion;
+    });
+
+    const parseDateValue = (sp: SparePart): number => {
+      const dateStr = sp.fecha_pedido || sp.fecha_instalacion || sp.created_at || '';
+      if (dateStr) {
+        if (dateStr.includes('/')) {
+          const parts = dateStr.split('/');
+          if (parts.length === 3) {
+            const day = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10) - 1;
+            const year = parseInt(parts[2], 10);
+            if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+              return new Date(year, month, day).getTime();
+            }
+          }
+        }
+        const parsed = Date.parse(dateStr);
+        if (!isNaN(parsed)) return parsed;
+      }
+      if (sp.anio) {
+        return new Date(Number(sp.anio) || 2026, 0, 1).getTime();
+      }
+      return 0;
+    };
+
+    return [...filtered].sort((a, b) => {
+      switch (sparePartsSort) {
+        case 'newest':
+          return parseDateValue(b) - parseDateValue(a);
+        case 'oldest':
+          return parseDateValue(a) - parseDateValue(b);
+        case 'pn_az':
+          return (a.pn || '').localeCompare(b.pn || '');
+        case 'pn_za':
+          return (b.pn || '').localeCompare(a.pn || '');
+        case 'cliente_az':
+          return (a.cliente || '').localeCompare(b.cliente || '');
+        default:
+          return 0;
+      }
+    });
+  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterCliente, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsSort]);
+
+  const uniqueClientes = React.useMemo(() => [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))], [spareParts]);
+  const uniqueMods = React.useMemo(() => [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))], [spareParts]);
+  const uniqueCondiciones = React.useMemo(() => [...new Set(spareParts.map(sp => sp.condicion).filter(Boolean))], [spareParts]);
+  const totalUnidades = React.useMemo(() => spareParts.reduce((acc, sp) => acc + (Number(sp.cantidad) || 1), 0), [spareParts]);
+
 
   const [managingReturnAsset, setManagingReturnAsset] = useState<Asset | null>(null);
   const [logisticsFilter, setLogisticsFilter] = useState<{ status: string; condicion: string; proveedor: string }>({ status: '', condicion: '', proveedor: '' });
@@ -2034,7 +2095,23 @@ export default function App() {
       <header className="flex-none bg-slate-900 dark:bg-slate-950 text-white p-3 md:p-4 shadow-lg flex justify-between items-center z-50 h-[70px] border-b border-slate-800 dark:border-slate-800">
         <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-                {!logoError ? ( <img src="./logo.png" alt="Logo" className="h-6 md:h-8 w-auto object-contain" onError={() => setLogoError(true)} /> ) : ( <Eye size={24} className="text-white opacity-80" /> )}
+                {!logoError ? ( 
+                    <img 
+                        src="/inicio.png" 
+                        alt="Logo" 
+                        className="h-6 md:h-8 w-auto object-contain" 
+                        onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            if (target.src.includes('inicio.png')) {
+                                target.src = '/app.png';
+                            } else {
+                                setLogoError(true);
+                            }
+                        }} 
+                    /> 
+                ) : ( 
+                    <Eye size={24} className="text-white opacity-80" /> 
+                )}
                 <h1 className="text-lg md:text-xl font-bold tracking-tight hidden sm:block">OmniTrace</h1>
             </div>
         </div>
@@ -4028,70 +4105,6 @@ export default function App() {
             )}
                     {/* ── MÓDULO REPUESTOS ── */}
             {activeTab === 'SPAREPARTS' && (() => {
-                // ── Lógica de filtrado + ordenamiento (memoizada) ─────────
-                const filteredSpareParts = React.useMemo(() => {
-                    const search = sparePartsDebouncedSearch.toLowerCase();
-                    const filtered = spareParts.filter(sp => {
-                        const matchSearch = !search ||
-                            sp.pn?.toLowerCase().includes(search) ||
-                            sp.descripcion?.toLowerCase().includes(search) ||
-                            sp.cliente?.toLowerCase().includes(search) ||
-                            sp.orden_ge?.toLowerCase().includes(search);
-                        const matchCliente = !sparePartsFilterCliente || sp.cliente === sparePartsFilterCliente;
-                        const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
-                        const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
-                        return matchSearch && matchCliente && matchMod && matchCondicion;
-                    });
-
-                    // Función auxiliar para convertir fechas de CSV (ej: "20/7/2026", "2026-07-08", o año/mes) a timestamp numérico
-                    const parseDateValue = (sp: SparePart): number => {
-                        const dateStr = sp.fecha_pedido || sp.fecha_instalacion || sp.created_at || '';
-                        if (dateStr) {
-                            // Si tiene formato DD/MM/YYYY
-                            if (dateStr.includes('/')) {
-                                const parts = dateStr.split('/');
-                                if (parts.length === 3) {
-                                    const day = parseInt(parts[0], 10);
-                                    const month = parseInt(parts[1], 10) - 1;
-                                    const year = parseInt(parts[2], 10);
-                                    if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
-                                        return new Date(year, month, day).getTime();
-                                    }
-                                }
-                            }
-                            const parsed = Date.parse(dateStr);
-                            if (!isNaN(parsed)) return parsed;
-                        }
-                        if (sp.anio) {
-                            return new Date(Number(sp.anio) || 2026, 0, 1).getTime();
-                        }
-                        return 0;
-                    };
-
-                    // Ordenamiento
-                    return [...filtered].sort((a, b) => {
-                        switch (sparePartsSort) {
-                            case 'newest':
-                                return parseDateValue(b) - parseDateValue(a);
-                            case 'oldest':
-                                return parseDateValue(a) - parseDateValue(b);
-                            case 'pn_az':
-                                return (a.pn || '').localeCompare(b.pn || '');
-                            case 'pn_za':
-                                return (b.pn || '').localeCompare(a.pn || '');
-                            case 'cliente_az':
-                                return (a.cliente || '').localeCompare(b.cliente || '');
-                            default:
-                                return 0;
-                        }
-                    });
-                }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterCliente, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsSort]);
-
-                // ── KPIs (memoizados) ──────────────────────────────────────
-                const uniqueClientes = React.useMemo(() => [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))], [spareParts]);
-                const uniqueMods     = React.useMemo(() => [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))], [spareParts]);
-                const uniqueCondiciones = React.useMemo(() => [...new Set(spareParts.map(sp => sp.condicion).filter(Boolean))], [spareParts]);
-                const totalUnidades  = React.useMemo(() => spareParts.reduce((acc, sp) => acc + (Number(sp.cantidad) || 1), 0), [spareParts]);
 
 
                 // ── Importar CSV / Excel ───────────────────────────────────
