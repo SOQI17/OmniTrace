@@ -82,7 +82,8 @@ import {
   Kanban,
   FilePlus,
   Upload,
-  Package
+  Package,
+  ArrowUpDown
 } from 'lucide-react';
 
 // ─── PERMISOS DISPONIBLES ────────────────────────────────────────────────────
@@ -789,11 +790,22 @@ export default function App() {
   const [spareParts, setSpareParts] = useState<SparePart[]>([]);
   const [sparePartsLoading, setSparePartsLoading] = useState(true);
   const [sparePartsSearch, setSparePartsSearch] = useState('');
+  const [sparePartsDebouncedSearch, setSparePartsDebouncedSearch] = useState('');
   const [sparePartsFilterCliente, setSparePartsFilterCliente] = useState('');
   const [sparePartsFilterMod, setSparePartsFilterMod] = useState('');
   const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
+  const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'pn_az' | 'pn_za' | 'cliente_az'>('newest');
   const [showSparePartModal, setShowSparePartModal] = useState(false);
   const [csvImporting, setCsvImporting] = useState(false);
+
+  // Debounce del buscador — actualiza solo 250ms después de que el usuario deja de escribir
+  const sparePartsSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleSparePartsSearchChange = (value: string) => {
+    setSparePartsSearch(value);
+    if (sparePartsSearchTimerRef.current) clearTimeout(sparePartsSearchTimerRef.current);
+    sparePartsSearchTimerRef.current = setTimeout(() => setSparePartsDebouncedSearch(value), 250);
+  };
+
 
   const [managingReturnAsset, setManagingReturnAsset] = useState<Asset | null>(null);
   const [logisticsFilter, setLogisticsFilter] = useState<{ status: string; condicion: string; proveedor: string }>({ status: '', condicion: '', proveedor: '' });
@@ -4016,25 +4028,71 @@ export default function App() {
             )}
                     {/* ── MÓDULO REPUESTOS ── */}
             {activeTab === 'SPAREPARTS' && (() => {
-                // ── Lógica de filtrado ─────────────────────────────────────
-                const filteredSpareParts = spareParts.filter(sp => {
-                    const search = sparePartsSearch.toLowerCase();
-                    const matchSearch = !search ||
-                        sp.pn?.toLowerCase().includes(search) ||
-                        sp.descripcion?.toLowerCase().includes(search) ||
-                        sp.cliente?.toLowerCase().includes(search) ||
-                        sp.orden_ge?.toLowerCase().includes(search);
-                    const matchCliente = !sparePartsFilterCliente || sp.cliente === sparePartsFilterCliente;
-                    const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
-                    const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
-                    return matchSearch && matchCliente && matchMod && matchCondicion;
-                });
+                // ── Lógica de filtrado + ordenamiento (memoizada) ─────────
+                const filteredSpareParts = React.useMemo(() => {
+                    const search = sparePartsDebouncedSearch.toLowerCase();
+                    const filtered = spareParts.filter(sp => {
+                        const matchSearch = !search ||
+                            sp.pn?.toLowerCase().includes(search) ||
+                            sp.descripcion?.toLowerCase().includes(search) ||
+                            sp.cliente?.toLowerCase().includes(search) ||
+                            sp.orden_ge?.toLowerCase().includes(search);
+                        const matchCliente = !sparePartsFilterCliente || sp.cliente === sparePartsFilterCliente;
+                        const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
+                        const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
+                        return matchSearch && matchCliente && matchMod && matchCondicion;
+                    });
 
-                // ── KPIs ───────────────────────────────────────────────────
-                const uniqueClientes = [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))];
-                const uniqueMods = [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))];
-                const uniqueCondiciones = [...new Set(spareParts.map(sp => sp.condicion).filter(Boolean))];
-                const totalUnidades = spareParts.reduce((acc, sp) => acc + (Number(sp.cantidad) || 1), 0);
+                    // Función auxiliar para convertir fechas de CSV (ej: "20/7/2026", "2026-07-08", o año/mes) a timestamp numérico
+                    const parseDateValue = (sp: SparePart): number => {
+                        const dateStr = sp.fecha_pedido || sp.fecha_instalacion || sp.created_at || '';
+                        if (dateStr) {
+                            // Si tiene formato DD/MM/YYYY
+                            if (dateStr.includes('/')) {
+                                const parts = dateStr.split('/');
+                                if (parts.length === 3) {
+                                    const day = parseInt(parts[0], 10);
+                                    const month = parseInt(parts[1], 10) - 1;
+                                    const year = parseInt(parts[2], 10);
+                                    if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+                                        return new Date(year, month, day).getTime();
+                                    }
+                                }
+                            }
+                            const parsed = Date.parse(dateStr);
+                            if (!isNaN(parsed)) return parsed;
+                        }
+                        if (sp.anio) {
+                            return new Date(Number(sp.anio) || 2026, 0, 1).getTime();
+                        }
+                        return 0;
+                    };
+
+                    // Ordenamiento
+                    return [...filtered].sort((a, b) => {
+                        switch (sparePartsSort) {
+                            case 'newest':
+                                return parseDateValue(b) - parseDateValue(a);
+                            case 'oldest':
+                                return parseDateValue(a) - parseDateValue(b);
+                            case 'pn_az':
+                                return (a.pn || '').localeCompare(b.pn || '');
+                            case 'pn_za':
+                                return (b.pn || '').localeCompare(a.pn || '');
+                            case 'cliente_az':
+                                return (a.cliente || '').localeCompare(b.cliente || '');
+                            default:
+                                return 0;
+                        }
+                    });
+                }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterCliente, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsSort]);
+
+                // ── KPIs (memoizados) ──────────────────────────────────────
+                const uniqueClientes = React.useMemo(() => [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))], [spareParts]);
+                const uniqueMods     = React.useMemo(() => [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))], [spareParts]);
+                const uniqueCondiciones = React.useMemo(() => [...new Set(spareParts.map(sp => sp.condicion).filter(Boolean))], [spareParts]);
+                const totalUnidades  = React.useMemo(() => spareParts.reduce((acc, sp) => acc + (Number(sp.cantidad) || 1), 0), [spareParts]);
+
 
                 // ── Importar CSV / Excel ───────────────────────────────────
                 const handleCsvImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -4188,16 +4246,35 @@ export default function App() {
                         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
                             <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex flex-wrap gap-3 items-center">
                                 {/* Búsqueda */}
-                                <div className="relative flex-1 min-w-[200px]">
+                                <div className="relative flex-1 min-w-[220px]">
                                     <Search size={14} className="absolute left-3 top-2.5 text-slate-400"/>
                                     <input
                                         type="text"
                                         placeholder="Buscar P/N, descripción, cliente, orden..."
                                         value={sparePartsSearch}
-                                        onChange={e => setSparePartsSearch(e.target.value)}
+                                        onChange={e => handleSparePartsSearchChange(e.target.value)}
                                         className="w-full pl-9 pr-4 py-2 text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
                                     />
-                                    {sparePartsSearch && <button onClick={() => setSparePartsSearch('')} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"><X size={14}/></button>}
+                                    {sparePartsSearch && (
+                                        <button onClick={() => { setSparePartsSearch(''); setSparePartsDebouncedSearch(''); }} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
+                                            <X size={14}/>
+                                        </button>
+                                    )}
+                                </div>
+                                {/* Ordenamiento */}
+                                <div className="flex items-center gap-1.5">
+                                    <ArrowUpDown size={14} className="text-slate-400" />
+                                    <select
+                                        value={sparePartsSort}
+                                        onChange={e => setSparePartsSort(e.target.value as any)}
+                                        className="text-xs font-semibold px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg dark:text-slate-200 outline-none focus:ring-2 focus:ring-emerald-400"
+                                    >
+                                        <option value="newest">📅 Más reciente primero</option>
+                                        <option value="oldest">📅 Más antiguo primero</option>
+                                        <option value="pn_az">🔤 P/N (A - Z)</option>
+                                        <option value="pn_za">🔤 P/N (Z - A)</option>
+                                        <option value="cliente_az">🏢 Cliente (A - Z)</option>
+                                    </select>
                                 </div>
                                 {/* Cliente */}
                                 <FilterSelect value={sparePartsFilterCliente} onChange={setSparePartsFilterCliente} placeholder="Todos los clientes"
@@ -4208,8 +4285,8 @@ export default function App() {
                                 {/* Condición */}
                                 <FilterSelect value={sparePartsFilterCondicion} onChange={setSparePartsFilterCondicion} placeholder="Todas las condiciones"
                                     options={(uniqueCondiciones as string[]).sort().map(c => ({ value: c, label: c }))} />
-                                {(sparePartsSearch || sparePartsFilterCliente || sparePartsFilterMod || sparePartsFilterCondicion) && (
-                                    <button onClick={() => { setSparePartsSearch(''); setSparePartsFilterCliente(''); setSparePartsFilterMod(''); setSparePartsFilterCondicion(''); }}
+                                {(sparePartsSearch || sparePartsFilterCliente || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsSort !== 'newest') && (
+                                    <button onClick={() => { setSparePartsSearch(''); setSparePartsDebouncedSearch(''); setSparePartsFilterCliente(''); setSparePartsFilterMod(''); setSparePartsFilterCondicion(''); setSparePartsSort('newest'); }}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
                                         <X size={11}/> Limpiar
                                     </button>
@@ -4237,17 +4314,41 @@ export default function App() {
                                     </div>
                                 ) : (
                                     <table className="w-full text-xs text-left min-w-[1100px]">
-                                        <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 uppercase font-black tracking-widest text-[10px] border-b border-slate-100 dark:border-slate-700">
+                                        <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 uppercase font-black tracking-widest text-[10px] border-b border-slate-100 dark:border-slate-700 select-none">
                                             <tr>
-                                                <th className="px-4 py-3">P/N</th>
+                                                <th 
+                                                    className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
+                                                    onClick={() => setSparePartsSort(s => s === 'pn_az' ? 'pn_za' : 'pn_az')}
+                                                    title="Ordenar por P/N"
+                                                >
+                                                    <span className="flex items-center gap-1">
+                                                        P/N {sparePartsSort === 'pn_az' ? '▲' : sparePartsSort === 'pn_za' ? '▼' : ''}
+                                                    </span>
+                                                </th>
                                                 <th className="px-4 py-3">Descripción</th>
-                                                <th className="px-4 py-3">Cliente</th>
+                                                <th 
+                                                    className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
+                                                    onClick={() => setSparePartsSort(s => s === 'cliente_az' ? 'newest' : 'cliente_az')}
+                                                    title="Ordenar por Cliente"
+                                                >
+                                                    <span className="flex items-center gap-1">
+                                                        Cliente {sparePartsSort === 'cliente_az' ? '▲' : ''}
+                                                    </span>
+                                                </th>
                                                 <th className="px-4 py-3 text-center">MOD</th>
                                                 <th className="px-4 py-3">Equipo</th>
                                                 <th className="px-4 py-3 text-center">Cant.</th>
                                                 <th className="px-4 py-3">Condición</th>
                                                 <th className="px-4 py-3">Orden GE</th>
-                                                <th className="px-4 py-3">F. Pedido</th>
+                                                <th 
+                                                    className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
+                                                    onClick={() => setSparePartsSort(s => s === 'newest' ? 'oldest' : 'newest')}
+                                                    title="Ordenar por Fecha"
+                                                >
+                                                    <span className="flex items-center gap-1">
+                                                        F. Pedido {sparePartsSort === 'newest' ? '▼' : sparePartsSort === 'oldest' ? '▲' : ''}
+                                                    </span>
+                                                </th>
                                                 <th className="px-4 py-3">F. Instalación</th>
                                                 <th className="px-4 py-3 text-center">Origen</th>
                                             </tr>
