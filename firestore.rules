@@ -3,80 +3,107 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
+    // ─── Helpers de Autenticación y Autorización ──────────────────────────────
 
     function isAuthenticated() {
       return request.auth != null;
     }
 
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasUserDoc() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
     function isAdmin() {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
+      return isAuthenticated() && (
+        request.auth.token.email == 'alexis.guerra@orimec.com.ec' ||
+        (hasUserDoc() && getUserData().role == 'ADMIN')
+      );
     }
 
     function isWarehouse() {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'WAREHOUSE';
+      return isAuthenticated() && (
+        isAdmin() ||
+        (hasUserDoc() && getUserData().role == 'WAREHOUSE')
+      );
     }
 
     function isImporter() {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'IMPORTER';
+      return isAuthenticated() && (
+        isAdmin() ||
+        (hasUserDoc() && getUserData().role == 'IMPORTER')
+      );
     }
 
-    // ─── Usuarios ─────────────────────────────────────────────────────────────
-    // Cada usuario puede leer su propio perfil.
-    // Solo ADMIN puede crear, modificar o eliminar perfiles de usuario.
+    // ─── Usuarios (/users/{userId}) ───────────────────────────────────────────
+    // • Lectura: Cada usuario lee su propio perfil; ADMIN puede listar todos.
+    // • Creación: ADMIN puede pre-registrar usuarios; un usuario nuevo puede auto-registrarse
+    //   exclusivamente con rol 'REQUESTER'.
+    // • Modificación: Solo ADMIN puede modificar roles, estado activo o permisos.
+    //   Un usuario regular solo puede actualizar su marca temporal 'lastLogin'.
+    // • Eliminación: Estrictamente ADMIN.
     match /users/{userId} {
-      allow read: if isAuthenticated() && request.auth.uid == userId;
-      allow write: if isAdmin();
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAuthenticated() && (
+        isAdmin() || 
+        (request.auth.uid == userId && request.resource.data.role == 'REQUESTER')
+      );
+      allow update: if isAuthenticated() && (
+        isAdmin() || 
+        (request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLogin']))
+      );
+      allow delete: if isAdmin();
     }
 
-    // ─── Activos (Assets) ─────────────────────────────────────────────────────
-    // Cualquier usuario autenticado puede leer activos.
-    // Solo ADMIN, IMPORTER y WAREHOUSE pueden crear o modificar.
-    // Solo ADMIN puede eliminar.
+    // ─── Activos (/assets/{assetId}) ──────────────────────────────────────────
+    // • Lectura: Cualquier usuario autenticado.
+    // • Creación: ADMIN, IMPORTER, WAREHOUSE, o usuarios creando solicitudes iniciales (DRAFT/SOLICITADO).
+    // • Modificación de estados/bodega/costos: ADMIN, IMPORTER y WAREHOUSE.
+    // • Eliminación: Estrictamente ADMIN (evita destrucción maliciosa o accidental).
     match /assets/{assetId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin() || isImporter() || isWarehouse();
+      allow create: if isAdmin() || isImporter() || isWarehouse() || 
+        (isAuthenticated() && request.resource.data.current_status in ['DRAFT', 'SOLICITADO']);
       allow update: if isAdmin() || isImporter() || isWarehouse();
       allow delete: if isAdmin();
     }
 
-    // ─── Auditoría (Audit Log) ────────────────────────────────────────────────
-    // Cualquier usuario autenticado puede leer el historial.
-    // Cualquier usuario autenticado puede crear registros (append-only).
-    // Nadie puede editar o borrar registros de auditoría (integridad del log).
+    // ─── Auditoría (/audit_log/{logId}) ───────────────────────────────────────
+    // • Integridad Forense Estricta (Append-Only):
+    //   Cualquier usuario autenticado puede leer y registrar eventos de auditoría.
+    //   Ningún usuario (ni siquiera ADMIN) puede modificar o eliminar logs.
     match /audit_log/{logId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
       allow update, delete: if false;
     }
 
-    // ─── Repuestos — Base Instalada ───────────────────────────────────────────
-    // Cualquier usuario autenticado puede leer la base de repuestos.
-    // ADMIN e IMPORTER pueden crear y actualizar (importar CSV, agregar manual).
-    // Solo ADMIN puede eliminar.
+    // ─── Repuestos — Base Instalada (/spare_parts/{partId}) ───────────────────
+    // • Lectura: Cualquier usuario autenticado.
+    // • Creación: ADMIN, IMPORTER, o generación automática vinculada a SOLICITUD.
+    // • Actualización: ADMIN e IMPORTER.
+    // • Eliminación: Estrictamente ADMIN.
     match /spare_parts/{partId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAdmin() || isImporter();
+      allow create: if isAdmin() || isImporter() || 
+        (isAuthenticated() && request.resource.data.source == 'SOLICITUD');
+      allow update: if isAdmin() || isImporter();
       allow delete: if isAdmin();
     }
 
-    // ─── Comentarios por Orden ────────────────────────────────────────────────
+    // ─── Comentarios por Orden (/order_comments/{orderId}) ────────────────────
     match /order_comments/{orderId} {
       allow read: if isAuthenticated();
       allow write: if isAuthenticated();
     }
 
-    // ─── Usuarios (lista para ADMIN) ─────────────────────────────────────────
-    // Permitir a ADMIN listar todos los usuarios.
-    match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow write: if isAdmin();
+    // ─── Regla por Defecto (Zero Trust) ───────────────────────────────────────
+    // Cualquier otra ruta no explícitamente autorizada queda terminantemente denegada.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

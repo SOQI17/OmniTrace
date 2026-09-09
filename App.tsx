@@ -229,8 +229,28 @@ async function deleteDocFromStorage(_url: string): Promise<void> {
   // limpia manualmente desde cloudinary.com → Media Library.
 }
 
+// ─── Sanitización Anti-Formula Injection (CSV/Excel) ─────────────────────────
+// Previene ataques de inyección de comandos o fórmulas (DDE/CSV Injection)
+// ante caracteres de control: =, +, -, @, \t, \r al abrir en Excel / Calc.
+function sanitizeForExport<T>(val: T): T {
+  if (val === null || val === undefined) return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trimStart();
+    if (/^[=+\-@\t\r]/.test(trimmed)) {
+      return `'${val}` as unknown as T;
+    }
+    return val;
+  }
+  return val;
+}
 
-
+function sanitizeRow<T extends Record<string, any>>(row: T): T {
+  const clean: any = {};
+  for (const [k, v] of Object.entries(row)) {
+    clean[k] = sanitizeForExport(v);
+  }
+  return clean as T;
+}
 
 const SearchableSelect = ({ options, value, onChange, placeholder }: { 
     options: { value: string; label: string; subLabel?: string }[], 
@@ -1284,8 +1304,8 @@ export default function App() {
         }
   };
 
-  // ── Exportar Liquidación a Excel ──────────────────────────────────────────
-  const exportLiquidacion = () => {
+  // ── Exportar Liquidación a Excel (con Anti-Formula Injection y Auditoría DLP) ────
+  const exportLiquidacion = async () => {
     if (!selectedAsset || itemsState.length === 0) return;
     const totalFobItems = itemsState.reduce((acc, it) => acc + (Number(it.cantidad)||0) * (Number(it.precio_uni)||0), 0);
     const cifFactor = totalCifGlobal > 0 && totalFobItems > 0 ? totalCifGlobal / totalFobItems : 1;
@@ -1303,7 +1323,7 @@ export default function App() {
       const liqTotal = arancelVal + fodinfa + iva;
       const costoFinal = cifTotal + arancelVal + fodinfa + proratedLocalPerItem;
       const landed = precioTotal > 0 ? costoFinal / precioTotal : 0;
-      return {
+      return sanitizeRow({
         '#': idx + 1, 'FACTURA': item.no_factura || '',
         'ITEM / P.N.': item.item_number || '', 'DESCRIPCIÓN': item.descripcion || '',
         'CANTIDAD': qty, 'PRECIO UNI': precioU, 'PRECIO TOTAL': precioTotal,
@@ -1314,7 +1334,7 @@ export default function App() {
         'TOTAL LIQUIDACIÓN': +liqTotal.toFixed(2),
         'GASTOS LOCALES': +proratedLocalPerItem.toFixed(2),
         'COSTO FINAL': +costoFinal.toFixed(2), 'LANDED COST': +landed.toFixed(6),
-      };
+      });
     });
 
     const resumen = [
@@ -1330,7 +1350,7 @@ export default function App() {
       { CONCEPTO: 'TRANSPORTE', VALOR: localExpenses.transporte_local },
       { CONCEPTO: 'AGENCIAMIENTO', VALOR: localExpenses.agenciamiento_aduana },
       { CONCEPTO: 'TOTAL GASTOS LOCALES', VALOR: totalLocal },
-    ];
+    ].map(r => sanitizeRow(r));
 
     const wb = XLSX.utils.book_new();
     const wsItems = XLSX.utils.json_to_sheet(rows);
@@ -1341,6 +1361,27 @@ export default function App() {
     XLSX.utils.book_append_sheet(wb, wsResumen, 'ADUANA Y GASTOS');
     XLSX.writeFile(wb, `LIQUIDACION_${selectedAsset.metadata.numero_orden_ge}_${new Date().toISOString().slice(0,10)}.xlsx`);
     showToast('Liquidación exportada correctamente.', 'success');
+
+    // Trazabilidad Forense / DLP en audit_log
+    try {
+      const logId = generateUUID();
+      await setDoc(doc(db, 'audit_log', logId), {
+        id: logId,
+        asset_id: selectedAsset.id,
+        actor_id: currentUser?.name || currentUser?.id || 'DESCONOCIDO',
+        action: 'EXPORT_DATA',
+        prev_value: null,
+        new_value: {
+          tipo: 'LIQUIDACION',
+          numero_orden_ge: selectedAsset.metadata.numero_orden_ge,
+          total_items: rows.length,
+          exported_at: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (auditErr) {
+      console.warn('Auditoría export liquidación:', auditErr);
+    }
   };
 
   // ─── Offline detection ────────────────────────────────────────────────────
@@ -1649,6 +1690,36 @@ export default function App() {
   }, []);
 
   const handleLogout = () => signOut(auth);
+
+  // ─── Control de Inactividad de Sesión (20 minutos) ─────────────────────────
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const INACTIVITY_LIMIT_MS = 20 * 60 * 1000; // 20 minutos
+    let timer: any;
+
+    const resetTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        showToast('Sesión cerrada automáticamente por inactividad (20 min). Por tu seguridad, vuelve a iniciar sesión.', 'warning', 10000);
+        setSessionExpired(true);
+        try {
+          await signOut(auth);
+        } catch (err) {
+          console.error('Error al cerrar sesión por inactividad:', err);
+        }
+      }, INACTIVITY_LIMIT_MS);
+    };
+
+    const events = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+    events.forEach(evt => window.addEventListener(evt, resetTimer, { passive: true }));
+    resetTimer();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      events.forEach(evt => window.removeEventListener(evt, resetTimer));
+    };
+  }, [currentUser]);
 
   const handleEditProduct = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -4625,9 +4696,9 @@ export default function App() {
                     return str;
                 };
 
-                // ── Exportar Excel ─────────────────────────────────────────
-                const handleExportSpareParts = () => {
-                    const rows = filteredSpareParts.map(sp => ({
+                // ── Exportar Excel (con Anti-Formula Injection y Auditoría DLP) ──
+                const handleExportSpareParts = async () => {
+                    const rows = filteredSpareParts.map(sp => sanitizeRow({
                         'P/N': sp.pn,
                         'DESCRIPCIÓN': sp.descripcion,
                         'CANTIDAD': sp.cantidad,
@@ -4654,6 +4725,27 @@ export default function App() {
                     XLSX.utils.book_append_sheet(wb, ws, 'REPUESTOS');
                     XLSX.writeFile(wb, `BASE_REPUESTOS_${new Date().toISOString().slice(0,10)}.xlsx`);
                     showToast(`Excel con ${rows.length} repuestos exportado correctamente.`, 'success');
+
+                    // Trazabilidad Forense / Auditoría DLP (Prevención de fuga de datos)
+                    try {
+                        const logId = generateUUID();
+                        await setDoc(doc(db, 'audit_log', logId), {
+                            id: logId,
+                            asset_id: 'EXPORT_REPUESTOS',
+                            actor_id: currentUser?.name || currentUser?.id || 'DESCONOCIDO',
+                            action: 'EXPORT_DATA',
+                            prev_value: null,
+                            new_value: {
+                                total_records: rows.length,
+                                exported_at: new Date().toISOString(),
+                                module: 'REPUESTOS',
+                                actor_role: currentUser?.role || 'DESCONOCIDO'
+                            },
+                            timestamp: new Date().toISOString()
+                        });
+                    } catch (auditErr) {
+                        console.warn('No se pudo registrar la auditoría de exportación:', auditErr);
+                    }
                 };
 
                 return (

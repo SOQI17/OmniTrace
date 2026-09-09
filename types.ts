@@ -128,9 +128,9 @@ export interface AuditLogEntry {
   id: string; // Internal ID for the log entry
   asset_id: string;
   actor_id: string;
-  action: 'STATUS_CHANGE' | 'UPDATE_FIELD' | 'UPLOAD_DOC' | 'CREATE';
-  prev_value: Partial<Asset> | null;
-  new_value: Partial<Asset>;
+  action: 'STATUS_CHANGE' | 'UPDATE_FIELD' | 'UPLOAD_DOC' | 'CREATE' | 'EXPORT_DATA';
+  prev_value: Partial<Asset> | any;
+  new_value: Partial<Asset> | any;
   timestamp: string; // ISO String
 }
 
