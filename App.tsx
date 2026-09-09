@@ -256,6 +256,53 @@ function sanitizeRow<T extends Record<string, any>>(row: T): T {
   return clean as T;
 }
 
+// ─── Normalización Inteligente de Condiciones de Repuestos ───────────────────
+// Agrupa variaciones de texto en 4 categorías estándar:
+// 1. CONTRATO DE SERVICIOS (si contiene 'contrato', 'service contract', 'cs')
+// 2. GARANTÍAS (si contiene 'garantía', 'garantia', 'warranty', 'wty')
+// 3. DOA (si contiene 'doa', 'foa', 'foi')
+// 4. VENTAS (si contiene 'venta', 'compra', 'purchase', o si solo contiene valor numérico de precio)
+function normalizeSparePartCondition(cond: string | undefined | null, precio?: number): string {
+  const str = (cond || '').trim();
+  const lower = str.toLowerCase();
+
+  // 1. Contrato de servicios (cualquier variación que mencione contrato o CS)
+  if (/contrato|service\s*contract|\bcs\b/i.test(lower)) {
+    return 'CONTRATO DE SERVICIOS';
+  }
+
+  // 2. Garantías (garantía, garantía extendida, warranty, wty)
+  if (/garant[ií]a|warranty|\bwty\b/i.test(lower)) {
+    return 'GARANTÍAS';
+  }
+
+  // 3. DOA / FOA / FOI (Dead on Arrival, FOA)
+  if (/\b(doa|foa|foi)\b/i.test(lower)) {
+    return 'DOA';
+  }
+
+  // 4. Ventas / Compra
+  if (/ventas?|compras?|purchase|sales?/i.test(lower)) {
+    return 'VENTAS';
+  }
+
+  // 5. Si el texto de la condición es puramente un precio (ej: "5233.06", "13887,20$", "$450") o si tiene precio mayor a 0
+  const isOnlyPriceString = /^[\$€£]?\s*\d+(?:[.,]\d{1,2})?\s*(?:usd|\$)?$/i.test(str.replace(/\s+/g, ''));
+  if (isOnlyPriceString) {
+    return 'VENTAS';
+  }
+
+  if (precio !== undefined && precio > 0 && (!str || str === '—' || str === '-' || str === 'MANUAL')) {
+    return 'VENTAS';
+  }
+
+  if (!str || str === '—' || str === '-') {
+    return precio !== undefined && precio > 0 ? 'VENTAS' : '—';
+  }
+
+  return str.toUpperCase();
+}
+
 const SearchableSelect = ({ options, value, onChange, placeholder }: { 
     options: { value: string; label: string; subLabel?: string }[], 
     value: string | null, 
@@ -914,7 +961,7 @@ export default function App() {
       const matchDia = !sparePartsFilterDia || dp.dia === sparePartsFilterDia;
 
       const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
-      const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
+      const matchCondicion = !sparePartsFilterCondicion || normalizeSparePartCondition(sp.condicion, sp.precio) === sparePartsFilterCondicion;
       const matchOrigen = !sparePartsFilterOrigen || sp.source === sparePartsFilterOrigen;
       return matchSearch && matchAnio && matchMes && matchDia && matchMod && matchCondicion && matchOrigen;
     });
@@ -1141,7 +1188,14 @@ export default function App() {
 
   const uniqueClientes = React.useMemo(() => [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))], [spareParts]);
   const uniqueMods = React.useMemo(() => [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))], [spareParts]);
-  const uniqueCondiciones = React.useMemo(() => [...new Set(spareParts.map(sp => sp.condicion).filter(Boolean))], [spareParts]);
+  const uniqueCondiciones = React.useMemo(() => {
+    const set = new Set<string>();
+    spareParts.forEach(sp => {
+      const norm = normalizeSparePartCondition(sp.condicion, sp.precio);
+      if (norm && norm !== '—') set.add(norm);
+    });
+    return Array.from(set).sort();
+  }, [spareParts]);
   const totalUnidades = React.useMemo(() => spareParts.reduce((acc, sp) => acc + (Number(sp.cantidad) || 1), 0), [spareParts]);
 
 
@@ -2033,7 +2087,7 @@ export default function App() {
             equipo: (formData.get('equipo_destino') as string) || '',
             workflow_id: (formData.get('workflow_id') as string) || '',
             orden_ge: (formData.get('numero_orden_ge') as string) || '',
-            condicion: (formData.get('condicion') as string) || '',
+            condicion: normalizeSparePartCondition((formData.get('condicion') as string) || '', item.cost ? Number(item.cost) : undefined),
             observacion: `Creado desde Solicitud (${currentUser.name})`,
             mes: capitalizedMes,
             anio: now.getFullYear(),
@@ -4560,15 +4614,8 @@ export default function App() {
                                 }
                             }
 
-                            // Limpiar la condición para que no quede con el número mezclado
-                            let cleanCondition = rawObs;
-                            if (extractedPrice !== undefined) {
-                                cleanCondition = rawObs
-                                    .replace(/[\d.,]+\s*\$?/g, '')
-                                    .replace(/\bUSD\b/gi, '')
-                                    .trim();
-                                if (!cleanCondition) cleanCondition = 'COMPRA';
-                            }
+                            // Normalizar condición agrupando en: Contrato de Servicios, Garantías, DOA, Ventas
+                            const cleanCondition = normalizeSparePartCondition(rawObs, extractedPrice);
 
                             const sp: any = {
                                 pn:          String(row['P/N'] || row['PN'] || row['pn'] || '').trim(),
@@ -4579,7 +4626,7 @@ export default function App() {
                                 equipo:      String(row['Equipo'] || row['EQUIPO'] || '').trim(),
                                 workflow_id: String(row['WF'] || row['Wf'] || '').trim(),
                                 orden_ge:    String(row['ORDEN'] || row['Orden'] || '').trim(),
-                                condicion:   cleanCondition || '—',
+                                condicion:   cleanCondition,
                                 observacion: rawObs,
                                 mes:         String(row['MES'] || row['Mes'] || '').trim(),
                                 anio:        Number(row['Año'] || row['AÑO'] || row['anio'] || new Date().getFullYear()),
@@ -4615,14 +4662,60 @@ export default function App() {
                     if (!confirmed) return;
 
                     try {
-                        const batch = writeBatch(db);
-                        spareParts.forEach(sp => {
-                            batch.delete(doc(db, 'spare_parts', sp.id));
-                        });
-                        await batch.commit();
+                        const BATCH_SIZE = 400;
+                        for (let i = 0; i < spareParts.length; i += BATCH_SIZE) {
+                            const chunk = spareParts.slice(i, i + BATCH_SIZE);
+                            const batch = writeBatch(db);
+                            chunk.forEach(sp => {
+                                batch.delete(doc(db, 'spare_parts', sp.id));
+                            });
+                            await batch.commit();
+                        }
                         showToast('Base de repuestos vaciada. Ahora puedes importar el archivo limpio.', 'info', 5000);
                     } catch (err: any) {
                         showError(`Error al vaciar: ${err.message}`);
+                    }
+                };
+
+                // ── Agrupar y normalizar condiciones en base de datos (Admin / Alexis) ──
+                const handleBatchNormalizeConditions = async () => {
+                    if (!canManageSpareParts || spareParts.length === 0 || !currentUser) return;
+
+                    const needsUpdate = spareParts.filter(sp => {
+                        const normalized = normalizeSparePartCondition(sp.condicion, sp.precio);
+                        return sp.condicion !== normalized;
+                    });
+
+                    if (needsUpdate.length === 0) {
+                        showToast('Todas las condiciones de los repuestos ya se encuentran agrupadas y normalizadas.', 'info', 4000);
+                        return;
+                    }
+
+                    const confirmed = await showConfirm(
+                        `¿Deseas agrupar y actualizar ${needsUpdate.length} repuestos a las 4 categorías estándar?\n\n` +
+                        `• CONTRATO DE SERVICIOS\n• GARANTÍAS\n• DOA\n• VENTAS\n\n` +
+                        `Esta acción actualizará los registros directamente en la base de datos.`
+                    );
+                    if (!confirmed) return;
+
+                    try {
+                        const BATCH_SIZE = 400;
+                        let updatedCount = 0;
+                        for (let i = 0; i < needsUpdate.length; i += BATCH_SIZE) {
+                            const chunk = needsUpdate.slice(i, i + BATCH_SIZE);
+                            const batch = writeBatch(db);
+                            chunk.forEach(sp => {
+                                const targetCond = normalizeSparePartCondition(sp.condicion, sp.precio);
+                                batch.update(doc(db, 'spare_parts', sp.id), {
+                                    condicion: targetCond
+                                });
+                            });
+                            await batch.commit();
+                            updatedCount += chunk.length;
+                        }
+                        showToast(`✅ ${updatedCount} repuestos agrupados y normalizados con éxito.`, 'success', 5000);
+                    } catch (err: any) {
+                        showError(`Error al normalizar condiciones: ${err.message}`);
                     }
                 };
 
@@ -4668,7 +4761,7 @@ export default function App() {
                         cliente: (fd.get('cliente') as string || '').trim(),
                         mod: (fd.get('mod') as string || '').trim(),
                         equipo: (fd.get('equipo') as string || '').trim(),
-                        condicion: (fd.get('condicion') as string || '').trim(),
+                        condicion: normalizeSparePartCondition((fd.get('condicion') as string || '').trim(), numPrecio),
                         orden_ge: (fd.get('orden_ge') as string || '').trim(),
                         workflow_id: (fd.get('workflow_id') as string || '').trim(),
                         fecha_pedido: fechaPed,
@@ -4737,7 +4830,7 @@ export default function App() {
                                 equipo: a.metadata.equipo_destino || '',
                                 workflow_id: a.metadata.workflow_id || '',
                                 orden_ge: a.metadata.numero_orden_ge || '',
-                                condicion: a.metadata.condicion || '',
+                                condicion: normalizeSparePartCondition(a.metadata.condicion, a.metadata.cost),
                                 observacion: `Sincronizado desde Solicitud (${a.current_status})`,
                                 mes: mesVal,
                                 anio: anioVal,
@@ -4805,7 +4898,7 @@ export default function App() {
                         'EQUIPO': sp.equipo,
                         'WF': sp.workflow_id,
                         'ORDEN GE': sp.orden_ge,
-                        'CONDICIÓN': sp.condicion,
+                        'CONDICIÓN': normalizeSparePartCondition(sp.condicion, sp.precio),
                         'PRECIO': sp.precio !== undefined ? sp.precio : '',
                         'OBSERVACIÓN': sp.observacion,
                         'MES': sp.mes,
@@ -4874,6 +4967,17 @@ export default function App() {
                                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 transition-all"
                                     >
                                         <RefreshCw size={13}/> Sincronizar Solicitudes
+                                    </button>
+                                )}
+
+                                {/* Agrupar y normalizar condiciones en base de datos (solo Admin / Alexis) */}
+                                {canManageSpareParts && spareParts.length > 0 && (
+                                    <button 
+                                        onClick={handleBatchNormalizeConditions}
+                                        title="Agrupa y normaliza las condiciones de los repuestos en las 4 categorías estándar (Contrato de Servicios, Garantías, DOA, Ventas)"
+                                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 hover:bg-amber-100 transition-all"
+                                    >
+                                        <CheckSquare size={13}/> Agrupar Condiciones
                                     </button>
                                 )}
 
@@ -5193,15 +5297,24 @@ export default function App() {
                                                             <span className="font-bold text-slate-800 dark:text-slate-200">{sp.cantidad ?? 1}</span>
                                                         </td>
                                                         <td className="px-4 py-3">
-                                                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                                                sp.condicion?.toLowerCase().includes('garantia') || sp.condicion?.toLowerCase().includes('garantía')
-                                                                    ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'
-                                                                    : sp.condicion?.toLowerCase().includes('doa')
-                                                                    ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
-                                                                    : sp.condicion?.toLowerCase().includes('compra')
-                                                                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400'
-                                                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
-                                                            }`}>{sp.condicion || '—'}</span>
+                                                            {(() => {
+                                                                const condNorm = normalizeSparePartCondition(sp.condicion, sp.precio);
+                                                                return (
+                                                                    <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                                                        condNorm === 'CONTRATO DE SERVICIOS'
+                                                                            ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                                                                            : condNorm === 'GARANTÍAS'
+                                                                            ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                                                                            : condNorm === 'DOA'
+                                                                            ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 border border-red-200 dark:border-red-800'
+                                                                            : condNorm === 'VENTAS'
+                                                                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                                                            : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                                                                    }`}>
+                                                                        {condNorm}
+                                                                    </span>
+                                                                );
+                                                            })()}
                                                         </td>
                                                         <td className="px-4 py-3 text-right">
                                                             {sp.precio !== undefined ? (
@@ -5762,30 +5875,37 @@ export default function App() {
                                         if (!currentUser) return;
                                         const fd = new FormData(e.target as HTMLFormElement);
                                         const id = generateUUID();
-                                        const sp: Omit<SparePart, 'id'> = {
-                                            pn: fd.get('pn') as string,
-                                            descripcion: fd.get('descripcion') as string,
-                                            cantidad: Number(fd.get('cantidad')),
-                                            cliente: fd.get('cliente') as string,
-                                            mod: fd.get('mod') as string,
-                                            equipo: fd.get('equipo') as string,
-                                            workflow_id: fd.get('workflow_id') as string || '',
-                                            orden_ge: fd.get('orden_ge') as string || '',
-                                            condicion: fd.get('condicion') as string,
-                                            observacion: fd.get('observacion') as string || '',
+                                        const rawPrecio = (fd.get('precio') as string || '').trim();
+                                        const numPrecio = rawPrecio ? parseFloat(rawPrecio) : undefined;
+                                        const condInput = (fd.get('condicion') as string || '').trim();
+
+                                        const sp: any = {
+                                            id,
+                                            pn: (fd.get('pn') as string || '').trim(),
+                                            descripcion: (fd.get('descripcion') as string || '').trim(),
+                                            cantidad: Number(fd.get('cantidad')) || 1,
+                                            cliente: (fd.get('cliente') as string || '').trim(),
+                                            mod: (fd.get('mod') as string || '').trim(),
+                                            equipo: (fd.get('equipo') as string || '').trim(),
+                                            workflow_id: (fd.get('workflow_id') as string || '').trim(),
+                                            orden_ge: (fd.get('orden_ge') as string || '').trim(),
+                                            condicion: normalizeSparePartCondition(condInput, numPrecio),
+                                            observacion: (fd.get('observacion') as string || '').trim(),
                                             mes: new Date().toLocaleString('es-ES', { month: 'long' }),
                                             anio: new Date().getFullYear(),
-                                            fecha_pedido: fd.get('fecha_pedido') as string || '',
+                                            fecha_pedido: (fd.get('fecha_pedido') as string || '').trim(),
                                             fecha_llegada: '',
-                                            fecha_despacho: fd.get('fecha_instalacion') as string || '',
+                                            fecha_despacho: (fd.get('fecha_instalacion') as string || '').trim(),
                                             fecha_egreso: '',
-                                            fecha_instalacion: fd.get('fecha_instalacion') as string || '',
+                                            fecha_instalacion: (fd.get('fecha_instalacion') as string || '').trim(),
                                             fecha_llegada_tentativa: '',
-                                            created_by: currentUser.name,
+                                            created_by: currentUser.name || currentUser.id,
                                             created_at: new Date().toISOString(),
                                             source: 'MANUAL',
                                         };
-                                        await doc(db, 'spare_parts', id);
+                                        if (numPrecio !== undefined && !isNaN(numPrecio)) {
+                                            sp.precio = numPrecio;
+                                        }
                                         await setDoc(doc(db, 'spare_parts', id), sp);
                                         showToast('Repuesto registrado correctamente.', 'success');
                                         setShowSparePartModal(false);
@@ -5822,12 +5942,15 @@ export default function App() {
                                         <div>
                                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Condición</label>
                                             <select name="condicion" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none">
-                                                <option value="COMPRA">Compra</option>
-                                                <option value="GARANTIA">Garantía</option>
-                                                <option value="DOA">DOA</option>
-                                                <option value="FOI">FOI</option>
-                                                <option value="CONTRATO_SERVICIO">Contrato Servicio</option>
+                                                <option value="CONTRATO DE SERVICIOS">Contrato de Servicios</option>
+                                                <option value="GARANTÍAS">Garantías</option>
+                                                <option value="DOA">DOA (o FOA)</option>
+                                                <option value="VENTAS">Ventas</option>
                                             </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Precio (USD)</label>
+                                            <input name="precio" type="number" step="0.01" placeholder="0.00" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-emerald-400 outline-none"/>
                                         </div>
                                         <div>
                                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Orden GE</label>
