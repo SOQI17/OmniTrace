@@ -798,15 +798,21 @@ export default function App() {
   const [sparePartsFilterDia, setSparePartsFilterDia] = useState('');
   const [sparePartsFilterMod, setSparePartsFilterMod] = useState('');
   const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
+  const [sparePartsFilterOrigen, setSparePartsFilterOrigen] = useState('');
   const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az'>('newest');
   const [showSparePartModal, setShowSparePartModal] = useState(false);
   const [editingSparePart, setEditingSparePart] = useState<SparePart | null>(null);
   const [csvImporting, setCsvImporting] = useState(false);
 
+  // Paginación de alto rendimiento para evitar lentitud con miles de registros
+  const [sparePartsPage, setSparePartsPage] = useState(1);
+  const [sparePartsPageSize, setSparePartsPageSize] = useState(50);
+
   // Debounce del buscador — actualiza solo 250ms después de que el usuario deja de escribir
   const sparePartsSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleSparePartsSearchChange = (value: string) => {
     setSparePartsSearch(value);
+    setSparePartsPage(1);
     if (sparePartsSearchTimerRef.current) clearTimeout(sparePartsSearchTimerRef.current);
     sparePartsSearchTimerRef.current = setTimeout(() => setSparePartsDebouncedSearch(value), 250);
   };
@@ -883,7 +889,8 @@ export default function App() {
 
       const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
       const matchCondicion = !sparePartsFilterCondicion || sp.condicion === sparePartsFilterCondicion;
-      return matchSearch && matchAnio && matchMes && matchDia && matchMod && matchCondicion;
+      const matchOrigen = !sparePartsFilterOrigen || sp.source === sparePartsFilterOrigen;
+      return matchSearch && matchAnio && matchMes && matchDia && matchMod && matchCondicion && matchOrigen;
     });
 
     const parseDateValue = (sp: SparePart): number => {
@@ -934,7 +941,46 @@ export default function App() {
           return 0;
       }
     });
-  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterAnio, sparePartsFilterMes, sparePartsFilterDia, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsSort]);
+  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterAnio, sparePartsFilterMes, sparePartsFilterDia, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsFilterOrigen, sparePartsSort]);
+
+  // Paginación calculada de alto rendimiento
+  const totalSparePartsPages = Math.max(1, Math.ceil(filteredSpareParts.length / sparePartsPageSize));
+
+  const paginatedSpareParts = React.useMemo(() => {
+    const start = (sparePartsPage - 1) * sparePartsPageSize;
+    return filteredSpareParts.slice(start, start + sparePartsPageSize);
+  }, [filteredSpareParts, sparePartsPage, sparePartsPageSize]);
+
+  // Formateador de fecha optimizado y rápido para la tabla
+  const formatSparePartDisplayDate = (val: any): string => {
+    if (!val && val !== 0) return '—';
+    const num = Number(val);
+    if (!isNaN(num) && num > 20000 && num < 80000 && !String(val).includes('/') && !String(val).includes('-')) {
+      const d = new Date(Date.UTC(1899, 11, 30) + num * 86400000);
+      if (!isNaN(d.getTime())) {
+        return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+      }
+    }
+    const str = String(val).trim();
+    if (!str) return '—';
+    const sep = str.includes('/') ? '/' : str.includes('-') ? '-' : null;
+    if (sep) {
+      const p = str.split('T')[0].split(sep);
+      if (p.length === 3) {
+        const p0 = p[0].trim();
+        const p1 = p[1].trim();
+        const p2 = p[2].trim();
+        if (p0.length === 4 || (Number(p0) > 31 && Number(p0) < 2100)) {
+          const y = p0.length === 2 ? `20${p0}` : p0;
+          return `${p2.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
+        }
+        let y = p2;
+        if (y.length === 2) y = `20${y}`;
+        return `${p0.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
+      }
+    }
+    return str;
+  };
 
   // Opciones jerárquicas dinámicas para Año, Mes y Día
   const uniqueAnios = React.useMemo(() => {
@@ -2673,7 +2719,7 @@ export default function App() {
                         </div>
                     )}
 
-                    {requestMode === 'PARTS' && (
+                    {(requestMode === 'PARTS' || requestMode === 'EQUIPMENT') && (
                         <div className="max-w-4xl mx-auto bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden animate-fadeIn border border-slate-200 dark:border-slate-700">
                             <div className="bg-slate-900 dark:bg-slate-950 p-6 text-white flex justify-between items-center">
                                 <div className="flex items-center gap-4">
@@ -2682,7 +2728,9 @@ export default function App() {
                                     </button>
                                     <div>
                                         <h2 className="text-lg font-bold">Detalle de Solicitud</h2>
-                                        <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mt-0.5">Categoría: Repuestos</p>
+                                        <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mt-0.5">
+                                            Categoría: {requestMode === 'PARTS' ? 'Repuestos' : 'Equipos Médicos'}
+                                        </p>
                                     </div>
                                 </div>
                                 {!canCreateRequest && <span className="bg-slate-700 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase">Lectura</span>}
@@ -4744,32 +4792,39 @@ export default function App() {
                                     {/* Año */}
                                     <FilterSelect 
                                         value={sparePartsFilterAnio} 
-                                        onChange={(v) => { setSparePartsFilterAnio(v); setSparePartsFilterMes(''); setSparePartsFilterDia(''); }} 
+                                        onChange={(v) => { setSparePartsFilterAnio(v); setSparePartsFilterMes(''); setSparePartsFilterDia(''); setSparePartsPage(1); }} 
                                         placeholder="Todos los Años"
                                         options={(uniqueAnios as string[]).map(a => ({ value: a, label: `Año ${a}` }))} 
                                     />
                                     {/* Mes (disponible siempre o dependiente del año) */}
                                     <FilterSelect 
                                         value={sparePartsFilterMes} 
-                                        onChange={(v) => { setSparePartsFilterMes(v); setSparePartsFilterDia(''); }} 
+                                        onChange={(v) => { setSparePartsFilterMes(v); setSparePartsFilterDia(''); setSparePartsPage(1); }} 
                                         placeholder="Todos los Meses"
                                         options={uniqueMeses} 
                                     />
                                     {/* Día (disponible dinámicamente) */}
                                     <FilterSelect 
                                         value={sparePartsFilterDia} 
-                                        onChange={setSparePartsFilterDia} 
+                                        onChange={(v) => { setSparePartsFilterDia(v); setSparePartsPage(1); }} 
                                         placeholder="Todos los Días"
                                         options={uniqueDias} 
                                     />
                                 </div>
                                 {/* MOD */}
-                                <FilterSelect value={sparePartsFilterMod} onChange={setSparePartsFilterMod} placeholder="Todas las MOD"
+                                <FilterSelect value={sparePartsFilterMod} onChange={(v) => { setSparePartsFilterMod(v); setSparePartsPage(1); }} placeholder="Todas las MOD"
                                     options={(uniqueMods as string[]).sort().map(m => ({ value: m, label: m }))} />
                                 {/* Condición */}
-                                <FilterSelect value={sparePartsFilterCondicion} onChange={setSparePartsFilterCondicion} placeholder="Todas las condiciones"
+                                <FilterSelect value={sparePartsFilterCondicion} onChange={(v) => { setSparePartsFilterCondicion(v); setSparePartsPage(1); }} placeholder="Todas las condiciones"
                                     options={(uniqueCondiciones as string[]).sort().map(c => ({ value: c, label: c }))} />
-                                {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsSort !== 'newest') && (
+                                {/* Origen (Excel vs Solicitud vs Manual) */}
+                                <FilterSelect value={sparePartsFilterOrigen} onChange={(v) => { setSparePartsFilterOrigen(v); setSparePartsPage(1); }} placeholder="Todos los orígenes"
+                                    options={[
+                                        { value: 'SOLICITUD', label: 'Origen: Solicitud' },
+                                        { value: 'CSV_IMPORT', label: 'Origen: Excel / CSV' },
+                                        { value: 'MANUAL', label: 'Origen: Manual' }
+                                    ]} />
+                                {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsFilterOrigen || sparePartsSort !== 'newest') && (
                                     <button onClick={() => { 
                                         setSparePartsSearch(''); 
                                         setSparePartsDebouncedSearch(''); 
@@ -4778,7 +4833,9 @@ export default function App() {
                                         setSparePartsFilterDia(''); 
                                         setSparePartsFilterMod(''); 
                                         setSparePartsFilterCondicion(''); 
+                                        setSparePartsFilterOrigen('');
                                         setSparePartsSort('newest'); 
+                                        setSparePartsPage(1);
                                     }}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
                                         <X size={11}/> Limpiar
@@ -4859,160 +4916,178 @@ export default function App() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                                            {filteredSpareParts.map(sp => (
-                                                <tr key={sp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                                                    <td className="px-4 py-3">
-                                                        <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">{sp.pn || '—'}</span>
-                                                    </td>
-                                                    <td className="px-4 py-3 max-w-[200px]">
-                                                        <span className="text-slate-700 dark:text-slate-300 line-clamp-2" title={sp.descripcion}>{sp.descripcion || '—'}</span>
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <span className="text-slate-600 dark:text-slate-400 font-medium truncate max-w-[150px] block" title={sp.cliente}>{sp.cliente || '—'}</span>
-                                                    </td>
-                                                    <td className="px-4 py-3 text-center">
-                                                        <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
-                                                            {sp.mod || '—'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <span className="text-slate-500 dark:text-slate-400 truncate max-w-[120px] block" title={sp.equipo}>{sp.equipo || '—'}</span>
-                                                    </td>
-                                                    <td className="px-4 py-3 text-center">
-                                                        <span className="font-bold text-slate-800 dark:text-slate-200">{sp.cantidad ?? 1}</span>
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                                            sp.condicion?.toLowerCase().includes('garantia') || sp.condicion?.toLowerCase().includes('garantía')
-                                                                ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'
-                                                                : sp.condicion?.toLowerCase().includes('doa')
-                                                                ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
-                                                                : sp.condicion?.toLowerCase().includes('compra')
-                                                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400'
-                                                                : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
-                                                        }`}>{sp.condicion || '—'}</span>
-                                                    </td>
-                                                    <td className="px-4 py-3 text-right">
-                                                        {sp.precio !== undefined ? (
-                                                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-xs">
-                                                                ${sp.precio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {paginatedSpareParts.map(sp => {
+                                                const linkedAsset = sp.asset_id ? assets.find(a => a.id === sp.asset_id) : undefined;
+                                                return (
+                                                    <tr key={sp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+                                                        <td className="px-4 py-3">
+                                                            <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">{sp.pn || '—'}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 max-w-[200px]">
+                                                            <span className="text-slate-700 dark:text-slate-300 line-clamp-2" title={sp.descripcion}>{sp.descripcion || '—'}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <span className="text-slate-600 dark:text-slate-400 font-medium truncate max-w-[150px] block" title={sp.cliente}>{sp.cliente || '—'}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
+                                                                {sp.mod || '—'}
                                                             </span>
-                                                        ) : (
-                                                            <span className="text-slate-400 text-[10px]">—</span>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">{sp.orden_ge || '—'}</span>
-                                                    </td>
-                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                                                        {(() => {
-                                                            const val = sp.fecha_pedido;
-                                                            if (!val) return '—';
-                                                            const num = Number(val);
-                                                            if (!isNaN(num) && num > 20000 && num < 80000 && !String(val).includes('/') && !String(val).includes('-')) {
-                                                                const d = new Date(new Date(Date.UTC(1899, 11, 30)).getTime() + num * 86400000);
-                                                                if (!isNaN(d.getTime())) {
-                                                                    return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
-                                                                }
-                                                            }
-                                                            const str = String(val).trim();
-                                                            const sep = str.includes('/') ? '/' : str.includes('-') ? '-' : null;
-                                                            if (sep) {
-                                                                const p = str.split('T')[0].split(sep);
-                                                                if (p.length === 3) {
-                                                                    const p0 = p[0].trim();
-                                                                    const p1 = p[1].trim();
-                                                                    const p2 = p[2].trim();
-                                                                    if (p0.length === 4 || (Number(p0) > 31 && Number(p0) < 2100)) {
-                                                                        const y = p0.length === 2 ? `20${p0}` : p0;
-                                                                        return `${p2.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
-                                                                    }
-                                                                    let y = p2;
-                                                                    if (y.length === 2) y = `20${y}`;
-                                                                    return `${p0.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
-                                                                }
-                                                            }
-                                                            return str;
-                                                        })()}
-                                                    </td>
-                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                                                        {(() => {
-                                                            const val = sp.fecha_instalacion;
-                                                            if (!val) return '—';
-                                                            const num = Number(val);
-                                                            if (!isNaN(num) && num > 20000 && num < 80000 && !String(val).includes('/') && !String(val).includes('-')) {
-                                                                const d = new Date(new Date(Date.UTC(1899, 11, 30)).getTime() + num * 86400000);
-                                                                if (!isNaN(d.getTime())) {
-                                                                    return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
-                                                                }
-                                                            }
-                                                            const str = String(val).trim();
-                                                            const sep = str.includes('/') ? '/' : str.includes('-') ? '-' : null;
-                                                            if (sep) {
-                                                                const p = str.split('T')[0].split(sep);
-                                                                if (p.length === 3) {
-                                                                    const p0 = p[0].trim();
-                                                                    const p1 = p[1].trim();
-                                                                    const p2 = p[2].trim();
-                                                                    if (p0.length === 4 || (Number(p0) > 31 && Number(p0) < 2100)) {
-                                                                        const y = p0.length === 2 ? `20${p0}` : p0;
-                                                                        return `${p2.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
-                                                                    }
-                                                                    let y = p2;
-                                                                    if (y.length === 2) y = `20${y}`;
-                                                                    return `${p0.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
-                                                                }
-                                                            }
-                                                            return str;
-                                                        })()}
-                                                    </td>
-                                                    <td className="px-4 py-3 text-center">
-                                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                                                            sp.source === 'CSV_IMPORT' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
-                                                            : sp.source === 'SOLICITUD' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400'
-                                                            : 'bg-slate-100 text-slate-500'
-                                                        }`}>
-                                                            {sp.source === 'CSV_IMPORT' ? 'CSV' : sp.source === 'SOLICITUD' ? 'Solicitud' : 'Manual'}
-                                                        </span>
-                                                    </td>
-                                                    {canManageSpareParts && (
-                                                        <td className="px-4 py-3 text-right whitespace-nowrap">
-                                                            <div className="flex items-center justify-end gap-1">
-                                                                <button 
-                                                                    type="button"
-                                                                    onClick={() => setEditingSparePart(sp)} 
-                                                                    title="Editar repuesto"
-                                                                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all"
-                                                                >
-                                                                    <Edit3 size={15}/>
-                                                                </button>
-                                                                <button 
-                                                                    type="button"
-                                                                    onClick={() => handleDeleteSparePart(sp)} 
-                                                                    title="Eliminar repuesto"
-                                                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-all"
-                                                                >
-                                                                    <Trash2 size={15}/>
-                                                                </button>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <span className="text-slate-500 dark:text-slate-400 truncate max-w-[120px] block" title={sp.equipo}>{sp.equipo || '—'}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            <span className="font-bold text-slate-800 dark:text-slate-200">{sp.cantidad ?? 1}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                                                sp.condicion?.toLowerCase().includes('garantia') || sp.condicion?.toLowerCase().includes('garantía')
+                                                                    ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'
+                                                                    : sp.condicion?.toLowerCase().includes('doa')
+                                                                    ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+                                                                    : sp.condicion?.toLowerCase().includes('compra')
+                                                                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400'
+                                                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                                                            }`}>{sp.condicion || '—'}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-right">
+                                                            {sp.precio !== undefined ? (
+                                                                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-xs">
+                                                                    ${sp.precio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-slate-400 text-[10px]">—</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">{sp.orden_ge || '—'}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                                            {formatSparePartDisplayDate(sp.fecha_pedido)}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                                            {formatSparePartDisplayDate(sp.fecha_instalacion)}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            <div className="flex flex-col items-center gap-1">
+                                                                <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                                                    sp.source === 'CSV_IMPORT' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
+                                                                    : sp.source === 'SOLICITUD' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400'
+                                                                    : 'bg-slate-100 text-slate-500'
+                                                                }`}>
+                                                                    {sp.source === 'CSV_IMPORT' ? 'Excel' : sp.source === 'SOLICITUD' ? 'Solicitud' : 'Manual'}
+                                                                </span>
+                                                                {linkedAsset && (
+                                                                    <button 
+                                                                        type="button"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setSelectedAssetId(linkedAsset.id);
+                                                                            setActiveTab('LOGISTICS');
+                                                                        }}
+                                                                        title={`Ver en Logística: Estado ${linkedAsset.current_status}`}
+                                                                        className="text-[8px] font-black px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition-colors uppercase tracking-wider"
+                                                                    >
+                                                                        {linkedAsset.current_status === 'SOLICITADO' || linkedAsset.current_status === 'DRAFT' ? 'En Solicitud' :
+                                                                         linkedAsset.current_status === 'ORDERED' || linkedAsset.current_status === 'IN_TRANSIT' ? 'En Logística' :
+                                                                         linkedAsset.current_status === 'CUSTOMS' ? 'En Aduana' :
+                                                                         linkedAsset.current_status === 'RECEIVED_WH' ? 'En Bodega' :
+                                                                         linkedAsset.current_status === 'DISPATCHED' ? 'Despachado' : linkedAsset.current_status}
+                                                                    </button>
+                                                                )}
                                                             </div>
                                                         </td>
-                                                    )}
-                                                </tr>
-                                            ))}
+                                                        {canManageSpareParts && (
+                                                            <td className="px-4 py-3 text-right whitespace-nowrap">
+                                                                <div className="flex items-center justify-end gap-1">
+                                                                    <button 
+                                                                        type="button"
+                                                                        onClick={() => setEditingSparePart(sp)} 
+                                                                        title="Editar repuesto"
+                                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all"
+                                                                    >
+                                                                        <Edit3 size={15}/>
+                                                                    </button>
+                                                                    <button 
+                                                                        type="button"
+                                                                        onClick={() => handleDeleteSparePart(sp)} 
+                                                                        title="Eliminar repuesto"
+                                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-all"
+                                                                    >
+                                                                        <Trash2 size={15}/>
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        )}
+                                                    </tr>
+                                                );
+                                            })}
                                         </tbody>
                                     </table>
                                 )}
                             </div>
 
-                            {/* Footer con conteo */}
+                            {/* Footer con Paginación de Alto Rendimiento */}
                             {filteredSpareParts.length > 0 && (
-                                <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
-                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                                        Mostrando {filteredSpareParts.length} de {spareParts.length} registros
-                                    </span>
-                                    <span className="text-[10px] text-slate-400">
-                                        Última importación: {spareParts[0]?.created_at ? new Date(spareParts[0].created_at).toLocaleDateString('es-ES') : '—'}
-                                    </span>
+                                <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-800/50">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-[11px] text-slate-500 dark:text-slate-400 font-bold">
+                                            Mostrando <span className="text-slate-800 dark:text-slate-200">{(sparePartsPage - 1) * sparePartsPageSize + 1}</span> - <span className="text-slate-800 dark:text-slate-200">{Math.min(sparePartsPage * sparePartsPageSize, filteredSpareParts.length)}</span> de <span className="text-slate-800 dark:text-slate-200 font-black">{filteredSpareParts.length}</span> repuestos {filteredSpareParts.length !== spareParts.length && `(filtrados de ${spareParts.length})`}
+                                        </span>
+                                        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                                            <span className="text-[10px] uppercase font-bold">Por pág:</span>
+                                            <select 
+                                                value={sparePartsPageSize} 
+                                                onChange={e => { setSparePartsPageSize(Number(e.target.value)); setSparePartsPage(1); }}
+                                                className="text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-1 text-slate-700 dark:text-slate-300 outline-none"
+                                            >
+                                                <option value={25}>25</option>
+                                                <option value={50}>50</option>
+                                                <option value={100}>100</option>
+                                                <option value={200}>200</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {/* Controles de Navegación */}
+                                    <div className="flex items-center gap-1.5">
+                                        <button 
+                                            disabled={sparePartsPage <= 1}
+                                            onClick={() => setSparePartsPage(1)}
+                                            title="Primera página"
+                                            className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-700 transition-all text-xs font-bold"
+                                        >
+                                            &laquo;
+                                        </button>
+                                        <button 
+                                            disabled={sparePartsPage <= 1}
+                                            onClick={() => setSparePartsPage(p => Math.max(1, p - 1))}
+                                            title="Página anterior"
+                                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-700 transition-all text-xs font-bold"
+                                        >
+                                            <ChevronLeft size={14}/> Anterior
+                                        </button>
+                                        <div className="px-3 py-1 text-xs font-black text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg">
+                                            {sparePartsPage} / {totalSparePartsPages}
+                                        </div>
+                                        <button 
+                                            disabled={sparePartsPage >= totalSparePartsPages}
+                                            onClick={() => setSparePartsPage(p => Math.min(totalSparePartsPages, p + 1))}
+                                            title="Página siguiente"
+                                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-700 transition-all text-xs font-bold"
+                                        >
+                                            Siguiente <ChevronRight size={14}/>
+                                        </button>
+                                        <button 
+                                            disabled={sparePartsPage >= totalSparePartsPages}
+                                            onClick={() => setSparePartsPage(totalSparePartsPages)}
+                                            title="Última página"
+                                            className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-white dark:hover:bg-slate-700 transition-all text-xs font-bold"
+                                        >
+                                            &raquo;
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                         </div>
