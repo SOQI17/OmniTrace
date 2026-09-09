@@ -84,7 +84,11 @@ import {
   Upload,
   Package,
   ArrowUpDown,
-  Calendar
+  Calendar,
+  TrendingUp,
+  BarChart3,
+  Award,
+  Building2
 } from 'lucide-react';
 
 // ─── PERMISOS DISPONIBLES ────────────────────────────────────────────────────
@@ -823,6 +827,8 @@ export default function App() {
   const [showSparePartModal, setShowSparePartModal] = useState(false);
   const [editingSparePart, setEditingSparePart] = useState<SparePart | null>(null);
   const [csvImporting, setCsvImporting] = useState(false);
+  const [sparePartsViewMode, setSparePartsViewMode] = useState<'TABLE' | 'ANALYTICS'>('TABLE');
+  const [sparePartsAnalyticsScope, setSparePartsAnalyticsScope] = useState<'GLOBAL' | 'FILTERED'>('GLOBAL');
 
   // Paginación de alto rendimiento para evitar lentitud con miles de registros
   const [sparePartsPage, setSparePartsPage] = useState(1);
@@ -970,6 +976,98 @@ export default function App() {
     const start = (sparePartsPage - 1) * sparePartsPageSize;
     return filteredSpareParts.slice(start, start + sparePartsPageSize);
   }, [filteredSpareParts, sparePartsPage, sparePartsPageSize]);
+
+  // ─── Analítica y Métricas Ejecutivas de Repuestos ─────────────────────────
+  const sparePartsAnalytics = useMemo(() => {
+    const dataset = sparePartsAnalyticsScope === 'FILTERED' ? filteredSpareParts : spareParts;
+    
+    // 1. Clientes
+    const clienteMap = new Map<string, { cliente: string; totalUnidades: number; pedidos: number; pns: Set<string>; inversion: number }>();
+    // 2. Repuestos
+    const repuestoMap = new Map<string, { pn: string; descripcion: string; totalUnidades: number; veces: number; clientes: Set<string>; inversion: number }>();
+    // 3. Modalidades
+    const modMap = new Map<string, number>();
+    // 4. Equipos
+    const equipoMap = new Map<string, number>();
+
+    let totalPiezas = 0;
+    let totalInversion = 0;
+
+    for (const sp of dataset) {
+      const cant = Number(sp.cantidad) || 1;
+      const precio = Number(sp.precio) || 0;
+      const inv = precio * cant;
+      totalPiezas += cant;
+      totalInversion += inv;
+
+      // Clientes
+      const rawCliente = (sp.cliente || '').trim();
+      const cName = rawCliente ? rawCliente.toUpperCase() : 'NO ESPECIFICADO';
+      const cData = clienteMap.get(cName) || { cliente: cName, totalUnidades: 0, pedidos: 0, pns: new Set<string>(), inversion: 0 };
+      cData.totalUnidades += cant;
+      cData.pedidos += 1;
+      if (sp.pn) cData.pns.add(sp.pn.trim().toUpperCase());
+      cData.inversion += inv;
+      clienteMap.set(cName, cData);
+
+      // Repuestos
+      const rawPn = (sp.pn || '').trim();
+      const pnKey = rawPn ? rawPn.toUpperCase() : 'SIN P/N';
+      const rData = repuestoMap.get(pnKey) || { pn: pnKey, descripcion: sp.descripcion || 'Sin descripción', totalUnidades: 0, veces: 0, clientes: new Set<string>(), inversion: 0 };
+      rData.totalUnidades += cant;
+      rData.veces += 1;
+      if (sp.descripcion && (rData.descripcion === 'Sin descripción' || rData.descripcion.length < sp.descripcion.length)) {
+        rData.descripcion = sp.descripcion;
+      }
+      if (rawCliente) rData.clientes.add(rawCliente.toUpperCase());
+      rData.inversion += inv;
+      repuestoMap.set(pnKey, rData);
+
+      // Modalidad
+      const rawMod = (sp.mod || '').trim();
+      const modKey = rawMod ? rawMod.toUpperCase() : 'OTROS';
+      modMap.set(modKey, (modMap.get(modKey) || 0) + cant);
+
+      // Equipo
+      const rawEq = (sp.equipo || '').trim();
+      const eqKey = rawEq ? rawEq : 'No Especificado';
+      equipoMap.set(eqKey, (equipoMap.get(eqKey) || 0) + cant);
+    }
+
+    // Listas ordenadas
+    const topClientes = Array.from(clienteMap.values())
+      .filter(c => c.cliente !== 'NO ESPECIFICADO')
+      .sort((a, b) => b.totalUnidades - a.totalUnidades);
+
+    const topRepuestos = Array.from(repuestoMap.values())
+      .filter(r => r.pn !== 'SIN P/N')
+      .sort((a, b) => b.totalUnidades - a.totalUnidades);
+
+    const modalidadesList = Array.from(modMap.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    const equiposList = Array.from(equipoMap.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    // Paleta ejecutiva para Donut Chart
+    const MOD_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#6366f1', '#14b8a6', '#f97316'];
+
+    return {
+      totalRegistros: dataset.length,
+      totalPiezas,
+      totalInversion,
+      topClientes,
+      topRepuestos,
+      modalidadesList,
+      equiposList,
+      MOD_COLORS,
+      topCliente: topClientes[0] || null,
+      topRepuesto: topRepuestos[0] || null,
+      topModalidad: modalidadesList[0] || null,
+    };
+  }, [spareParts, filteredSpareParts, sparePartsAnalyticsScope]);
 
   // Formateador de fecha optimizado y rápido para la tabla
   const formatSparePartDisplayDate = (val: any): string => {
@@ -4804,6 +4902,68 @@ export default function App() {
                             </div>
                         </div>
 
+                        {/* ── Switcher de Vistas: Catálogo vs Métricas ── */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+                            <div className="flex items-center gap-2 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700">
+                                <button
+                                    onClick={() => setSparePartsViewMode('TABLE')}
+                                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                                        sparePartsViewMode === 'TABLE'
+                                            ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm border border-slate-200 dark:border-slate-700'
+                                            : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                                    }`}
+                                >
+                                    <Database size={14}/> Catálogo e Inventario
+                                    <span className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full font-bold text-slate-700 dark:text-slate-300">
+                                        {spareParts.length.toLocaleString()}
+                                    </span>
+                                </button>
+                                <button
+                                    onClick={() => setSparePartsViewMode('ANALYTICS')}
+                                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                                        sparePartsViewMode === 'ANALYTICS'
+                                            ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm border border-slate-200 dark:border-slate-700'
+                                            : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                                    }`}
+                                >
+                                    <BarChart3 size={14}/> Métricas y Analítica
+                                    <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                                        Executive
+                                    </span>
+                                </button>
+                            </div>
+
+                            {sparePartsViewMode === 'ANALYTICS' && (
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Alcance:</span>
+                                    <div className="flex items-center bg-slate-100 dark:bg-slate-900 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                                        <button
+                                            onClick={() => setSparePartsAnalyticsScope('GLOBAL')}
+                                            className={`px-3 py-1.5 rounded-md text-xs font-black uppercase tracking-wider transition-all ${
+                                                sparePartsAnalyticsScope === 'GLOBAL'
+                                                    ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                                                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                                            }`}
+                                        >
+                                            Base Completa ({spareParts.length.toLocaleString()})
+                                        </button>
+                                        <button
+                                            onClick={() => setSparePartsAnalyticsScope('FILTERED')}
+                                            className={`px-3 py-1.5 rounded-md text-xs font-black uppercase tracking-wider transition-all ${
+                                                sparePartsAnalyticsScope === 'FILTERED'
+                                                    ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                                                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                                            }`}
+                                        >
+                                            Filtro Activo ({filteredSpareParts.length.toLocaleString()})
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {sparePartsViewMode === 'TABLE' ? (
+                            <>
                         {/* ── KPIs ── */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex items-start justify-between">
@@ -5183,6 +5343,408 @@ export default function App() {
                                 </div>
                             )}
                         </div>
+                            </>
+                        ) : (
+                            /* ── PANEL DE MÉTRICAS Y ANALÍTICA EJECUTIVA ── */
+                            <div className="space-y-6 animate-fadeIn">
+                                {/* ── Resumen de Alcance ── */}
+                                <div className="bg-gradient-to-r from-emerald-500/10 via-blue-500/10 to-purple-500/10 border border-emerald-200/50 dark:border-emerald-800/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-2.5 bg-emerald-500 text-white rounded-xl shadow-sm">
+                                            <TrendingUp size={20}/>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider">
+                                                Inteligencia de Repuestos & Demanda de Clientes
+                                            </h3>
+                                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                                                {sparePartsAnalyticsScope === 'GLOBAL'
+                                                    ? `Analizando el histórico completo de ${sparePartsAnalytics.totalRegistros.toLocaleString()} registros (${sparePartsAnalytics.totalPiezas.toLocaleString()} piezas)`
+                                                    : `Analizando segmento filtrado de ${sparePartsAnalytics.totalRegistros.toLocaleString()} registros (${sparePartsAnalytics.totalPiezas.toLocaleString()} piezas)`
+                                                }
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs font-bold text-slate-600 dark:text-slate-300">
+                                        <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        Actualizado en tiempo real
+                                    </div>
+                                </div>
+
+                                {/* ── KPIs Ejecutivos ── */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                    {/* Top Cliente */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-xs flex flex-col justify-between hover:border-emerald-400 transition-colors">
+                                        <div className="flex items-start justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Cliente #1 (Mayor Demanda)</p>
+                                                <h3 className="text-xl font-black text-slate-900 dark:text-white truncate max-w-[200px]" title={sparePartsAnalytics.topCliente?.cliente || 'Sin datos'}>
+                                                    {sparePartsAnalytics.topCliente?.cliente || 'Sin datos'}
+                                                </h3>
+                                            </div>
+                                            <div className="p-2.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-xl">
+                                                <Award size={22}/>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-xs">
+                                            <span className="font-black text-emerald-600 dark:text-emerald-400">
+                                                {sparePartsAnalytics.topCliente?.totalUnidades.toLocaleString() || 0} unidades
+                                            </span>
+                                            <span className="text-slate-400">
+                                                {sparePartsAnalytics.topCliente?.pns.size || 0} P/Ns distintos
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Top Repuesto */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-xs flex flex-col justify-between hover:border-blue-400 transition-colors">
+                                        <div className="flex items-start justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Repuesto Más Solicitado</p>
+                                                <h3 className="text-xl font-black text-slate-900 dark:text-white truncate max-w-[200px]" title={sparePartsAnalytics.topRepuesto?.pn || 'Sin datos'}>
+                                                    {sparePartsAnalytics.topRepuesto?.pn || 'Sin datos'}
+                                                </h3>
+                                            </div>
+                                            <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-xl">
+                                                <Package size={22}/>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-xs">
+                                            <span className="font-black text-blue-600 dark:text-blue-400">
+                                                {sparePartsAnalytics.topRepuesto?.totalUnidades.toLocaleString() || 0} unidades
+                                            </span>
+                                            <span className="text-slate-400 truncate max-w-[130px]" title={sparePartsAnalytics.topRepuesto?.descripcion}>
+                                                {sparePartsAnalytics.topRepuesto?.descripcion || '—'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Inversión Registrada */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-xs flex flex-col justify-between hover:border-amber-400 transition-colors">
+                                        <div className="flex items-start justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Inversión Contabilizada</p>
+                                                <h3 className="text-xl font-black text-slate-900 dark:text-white">
+                                                    ${sparePartsAnalytics.totalInversion.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </h3>
+                                            </div>
+                                            <div className="p-2.5 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-xl">
+                                                <DollarSign size={22}/>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-xs">
+                                            <span className="font-black text-amber-600 dark:text-amber-400">
+                                                {sparePartsAnalytics.totalPiezas.toLocaleString()} unidades
+                                            </span>
+                                            <span className="text-slate-400">
+                                                ${sparePartsAnalytics.totalPiezas > 0 ? (sparePartsAnalytics.totalInversion / sparePartsAnalytics.totalPiezas).toFixed(2) : '0.00'} prom/u
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Modalidad Principal */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-xs flex flex-col justify-between hover:border-purple-400 transition-colors">
+                                        <div className="flex items-start justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Modalidad con Mayor Cuota</p>
+                                                <h3 className="text-xl font-black text-slate-900 dark:text-white truncate max-w-[200px]">
+                                                    {sparePartsAnalytics.topModalidad?.name || 'N/A'}
+                                                </h3>
+                                            </div>
+                                            <div className="p-2.5 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-xl">
+                                                <Cpu size={22}/>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-xs">
+                                            <span className="font-black text-purple-600 dark:text-purple-400">
+                                                {sparePartsAnalytics.topModalidad?.value.toLocaleString() || 0} piezas
+                                            </span>
+                                            <span className="text-slate-400">
+                                                {sparePartsAnalytics.totalPiezas > 0 ? Math.round(((sparePartsAnalytics.topModalidad?.value || 0) / sparePartsAnalytics.totalPiezas) * 100) : 0}% del total
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* ── Gráficos Principales (2x2) ── */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {/* Gráfico 1: Top Clientes */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-xs">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div>
+                                                <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                                    <Building2 size={16} className="text-emerald-500"/> Top 10 Clientes que Más Piden Repuestos
+                                                </h3>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Ranking por cantidad de unidades instaladas/requeridas</p>
+                                            </div>
+                                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-1 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                                                Demanda
+                                            </span>
+                                        </div>
+                                        {sparePartsAnalytics.topClientes.length === 0 ? (
+                                            <p className="text-center py-12 text-slate-400 text-xs font-medium">No hay datos de clientes registrados para este período.</p>
+                                        ) : (
+                                            <div className="h-[320px] w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart
+                                                        data={sparePartsAnalytics.topClientes.slice(0, 10)}
+                                                        layout="vertical"
+                                                        margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
+                                                    >
+                                                        <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                                                        <YAxis
+                                                            type="category"
+                                                            dataKey="cliente"
+                                                            width={140}
+                                                            stroke="#94a3b8"
+                                                            fontSize={10}
+                                                            tickLine={false}
+                                                            axisLine={false}
+                                                            tickFormatter={(v: string) => v.length > 18 ? v.slice(0, 18) + '…' : v}
+                                                        />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '0.75rem', color: '#f8fafc', fontSize: '12px' }}
+                                                            formatter={(val: any, _name: any, item: any) => [
+                                                                `${val} unidades (${item.payload.pns?.size || 0} P/Ns distintos)`,
+                                                                item.payload.cliente
+                                                            ]}
+                                                        />
+                                                        <Bar dataKey="totalUnidades" name="Unidades" fill="#10b981" radius={[0, 6, 6, 0]} />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Gráfico 2: Top Repuestos */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-xs">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div>
+                                                <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                                    <Package size={16} className="text-blue-500"/> Top 10 Repuestos Más Frecuentes (P/N)
+                                                </h3>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Componentes con mayor rotación o tasa de recambio</p>
+                                            </div>
+                                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-1 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-lg border border-blue-200 dark:border-blue-800">
+                                                Frecuencia
+                                            </span>
+                                        </div>
+                                        {sparePartsAnalytics.topRepuestos.length === 0 ? (
+                                            <p className="text-center py-12 text-slate-400 text-xs font-medium">No hay repuestos registrados para este período.</p>
+                                        ) : (
+                                            <div className="h-[320px] w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart
+                                                        data={sparePartsAnalytics.topRepuestos.slice(0, 10)}
+                                                        margin={{ top: 10, right: 20, left: -10, bottom: 45 }}
+                                                    >
+                                                        <XAxis
+                                                            dataKey="pn"
+                                                            stroke="#94a3b8"
+                                                            fontSize={10}
+                                                            angle={-30}
+                                                            textAnchor="end"
+                                                            interval={0}
+                                                            tickLine={false}
+                                                        />
+                                                        <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '0.75rem', color: '#f8fafc', fontSize: '12px' }}
+                                                            formatter={(val: any, _name: any, item: any) => [
+                                                                `${val} unidades (${item.payload.clientes?.size || 0} clientes)`,
+                                                                `${item.payload.pn}: ${item.payload.descripcion}`
+                                                            ]}
+                                                        />
+                                                        <Bar dataKey="totalUnidades" name="Unidades" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Gráfico 3: Modalidad Médica (Donut) */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-xs">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div>
+                                                <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                                    <Cpu size={16} className="text-purple-500"/> Distribución por Modalidad Médica
+                                                </h3>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Participación de repuestos por tipo de tecnología</p>
+                                            </div>
+                                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-1 bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 rounded-lg border border-purple-200 dark:border-purple-800">
+                                                Tecnología
+                                            </span>
+                                        </div>
+                                        {sparePartsAnalytics.modalidadesList.length === 0 ? (
+                                            <p className="text-center py-12 text-slate-400 text-xs font-medium">No hay modalidades registradas.</p>
+                                        ) : (
+                                            <div className="h-[280px] w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <PieChart>
+                                                        <Pie
+                                                            data={sparePartsAnalytics.modalidadesList}
+                                                            dataKey="value"
+                                                            nameKey="name"
+                                                            cx="50%"
+                                                            cy="50%"
+                                                            innerRadius={60}
+                                                            outerRadius={95}
+                                                            paddingAngle={3}
+                                                        >
+                                                            {sparePartsAnalytics.modalidadesList.map((entry, idx) => (
+                                                                <Cell key={`mod-${idx}`} fill={sparePartsAnalytics.MOD_COLORS[idx % sparePartsAnalytics.MOD_COLORS.length]} />
+                                                            ))}
+                                                        </Pie>
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '0.75rem', color: '#f8fafc', fontSize: '12px' }}
+                                                            formatter={(val: any) => [
+                                                                `${val} piezas (${sparePartsAnalytics.totalPiezas > 0 ? ((Number(val) / sparePartsAnalytics.totalPiezas) * 100).toFixed(1) : 0}%)`,
+                                                                'Volumen'
+                                                            ]}
+                                                        />
+                                                        <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Gráfico 4: Equipos Médicos */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-xs">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div>
+                                                <h3 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                                    <Wrench size={16} className="text-amber-500"/> Equipos Médicos con Mayor Demanda
+                                                </h3>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Modelos de equipos que más componentes han requerido</p>
+                                            </div>
+                                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-1 bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 rounded-lg border border-amber-200 dark:border-amber-800">
+                                                Modelos
+                                            </span>
+                                        </div>
+                                        {sparePartsAnalytics.equiposList.filter(e => e.name !== 'No Especificado').length === 0 ? (
+                                            <p className="text-center py-12 text-slate-400 text-xs font-medium">No hay equipos especificados en los registros.</p>
+                                        ) : (
+                                            <div className="h-[280px] w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart
+                                                        data={sparePartsAnalytics.equiposList.filter(e => e.name !== 'No Especificado').slice(0, 8)}
+                                                        layout="vertical"
+                                                        margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                                                    >
+                                                        <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                                                        <YAxis
+                                                            type="category"
+                                                            dataKey="name"
+                                                            width={140}
+                                                            stroke="#94a3b8"
+                                                            fontSize={10}
+                                                            tickLine={false}
+                                                            axisLine={false}
+                                                            tickFormatter={(v: string) => v.length > 18 ? v.slice(0, 18) + '…' : v}
+                                                        />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '0.75rem', color: '#f8fafc', fontSize: '12px' }}
+                                                            formatter={(val: any) => [`${val} repuestos instalados`, 'Equipo']}
+                                                        />
+                                                        <Bar dataKey="value" name="Repuestos" fill="#8b5cf6" radius={[0, 6, 6, 0]} />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* ── Tablas de Ranking Detallado ── */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {/* Ranking Clientes Clave */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-xs">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h4 className="text-xs font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                                <Building2 size={15} className="text-emerald-500"/> Ranking Clientes Clave
+                                            </h4>
+                                            <span className="text-[10px] text-slate-400 font-bold">Top 8</span>
+                                        </div>
+                                        <div className="space-y-3">
+                                            {sparePartsAnalytics.topClientes.slice(0, 8).map((c, i) => {
+                                                const maxQty = sparePartsAnalytics.topClientes[0]?.totalUnidades || 1;
+                                                const pct = Math.round((c.totalUnidades / maxQty) * 100);
+                                                return (
+                                                    <div key={c.cliente} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-700/50 flex flex-col gap-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-2.5">
+                                                                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${
+                                                                    i === 0 ? 'bg-amber-400 text-slate-950 shadow-xs' :
+                                                                    i === 1 ? 'bg-slate-300 text-slate-800' :
+                                                                    i === 2 ? 'bg-amber-600 text-white' :
+                                                                    'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                                                                }`}>
+                                                                    {i + 1}
+                                                                </span>
+                                                                <div>
+                                                                    <p className="text-xs font-black text-slate-800 dark:text-slate-200">{c.cliente}</p>
+                                                                    <p className="text-[10px] text-slate-400">{c.pedidos} pedidos · {c.pns.size} repuestos únicos</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <p className="text-xs font-black text-emerald-600 dark:text-emerald-400">{c.totalUnidades.toLocaleString()} u.</p>
+                                                                <p className="text-[10px] text-slate-400">{sparePartsAnalytics.totalPiezas > 0 ? ((c.totalUnidades / sparePartsAnalytics.totalPiezas) * 100).toFixed(1) : 0}% de cuota</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${pct}%` }}></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* Ranking Repuestos Críticos */}
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-xs">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h4 className="text-xs font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                                <Package size={15} className="text-blue-500"/> Ranking Repuestos Críticos
+                                            </h4>
+                                            <span className="text-[10px] text-slate-400 font-bold">Top 8</span>
+                                        </div>
+                                        <div className="space-y-3">
+                                            {sparePartsAnalytics.topRepuestos.slice(0, 8).map((r, i) => {
+                                                const maxQty = sparePartsAnalytics.topRepuestos[0]?.totalUnidades || 1;
+                                                const pct = Math.round((r.totalUnidades / maxQty) * 100);
+                                                return (
+                                                    <div key={r.pn} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-700/50 flex flex-col gap-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-2.5">
+                                                                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${
+                                                                    i === 0 ? 'bg-amber-400 text-slate-950 shadow-xs' :
+                                                                    i === 1 ? 'bg-slate-300 text-slate-800' :
+                                                                    i === 2 ? 'bg-amber-600 text-white' :
+                                                                    'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                                                                }`}>
+                                                                    {i + 1}
+                                                                </span>
+                                                                <div>
+                                                                    <p className="text-xs font-black font-mono text-slate-800 dark:text-slate-200">{r.pn}</p>
+                                                                    <p className="text-[10px] text-slate-400 truncate max-w-[200px]" title={r.descripcion}>{r.descripcion}</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <p className="text-xs font-black text-blue-600 dark:text-blue-400">{r.totalUnidades.toLocaleString()} u.</p>
+                                                                <p className="text-[10px] text-slate-400">En {r.clientes.size} clientes</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }}></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         {/* ── Modal Nuevo Registro Manual ── */}
                         {showSparePartModal && (
