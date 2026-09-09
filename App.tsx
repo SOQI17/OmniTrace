@@ -20,7 +20,7 @@ import { auth, db } from './firebase';
 import { signOut, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
 import {
   collection, doc, onSnapshot, writeBatch,
-  query, orderBy, updateDoc, setDoc, getDocs, where
+  query, orderBy, updateDoc, deleteDoc, setDoc, getDocs, where
 } from 'firebase/firestore';
 import { 
   Truck, 
@@ -800,6 +800,7 @@ export default function App() {
   const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
   const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az'>('newest');
   const [showSparePartModal, setShowSparePartModal] = useState(false);
+  const [editingSparePart, setEditingSparePart] = useState<SparePart | null>(null);
   const [csvImporting, setCsvImporting] = useState(false);
 
   // Debounce del buscador — actualiza solo 250ms después de que el usuario deja de escribir
@@ -1488,6 +1489,7 @@ export default function App() {
   };
 
   const isAdmin = currentUser?.role === 'ADMIN';
+  const canManageSpareParts = isAdmin || Boolean(currentUser?.name && currentUser.name.toLowerCase().includes('alexis'));
 
   // ── Auto-guardado de gastos locales y valores aduana ──────────────────────
   const triggerAutoSave = (
@@ -1793,12 +1795,51 @@ export default function App() {
     if (!currentUser || requestItems.length === 0) return;
     const formData = new FormData(e.target as HTMLFormElement);
     const batch = writeBatch(db);
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const fechaPedidoFormatted = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+    const mesNombre = now.toLocaleString('es-ES', { month: 'long' });
+    const capitalizedMes = mesNombre.charAt(0).toUpperCase() + mesNombre.slice(1);
+
     requestItems.forEach(item => {
         const id = generateUUID();
         const asset: Asset = { id, current_status: AssetStatus.DRAFT, lifecycle_lock: false, metadata: { workflow_id: formData.get('workflow_id') as string, provider: formData.get('provider') as string, cliente_final: formData.get('cliente_final') as string, equipo_destino: formData.get('equipo_destino') as string, condicion: formData.get('condicion') as AssetCondition, numero_orden_ge: formData.get('numero_orden_ge') as string, fecha_solicitud: new Date().toISOString(), pn: item.pn, description: item.description, cantidad: item.cantidad, cost: item.cost, serial_ge: 'PENDIENTE' }, logistics: { documents: {}, extra_docs: [] }, warehouse: {} };
         batch.set(doc(db,"assets",id), asset);
+
+        // Registro vinculado automáticamente a la Base de Repuestos
+        const spId = generateUUID();
+        const spRecord: any = {
+            id: spId,
+            pn: item.pn,
+            descripcion: item.description,
+            cantidad: item.cantidad,
+            cliente: (formData.get('cliente_final') as string) || '',
+            mod: (formData.get('equipo_destino') as string) || '',
+            equipo: (formData.get('equipo_destino') as string) || '',
+            workflow_id: (formData.get('workflow_id') as string) || '',
+            orden_ge: (formData.get('numero_orden_ge') as string) || '',
+            condicion: (formData.get('condicion') as string) || '',
+            observacion: `Creado desde Solicitud (${currentUser.name})`,
+            mes: capitalizedMes,
+            anio: now.getFullYear(),
+            fecha_pedido: fechaPedidoFormatted,
+            fecha_llegada: '',
+            fecha_despacho: '',
+            fecha_egreso: '',
+            fecha_instalacion: '',
+            fecha_llegada_tentativa: '',
+            asset_id: id,
+            created_by: currentUser.name || currentUser.id,
+            created_at: now.toISOString(),
+            source: 'SOLICITUD'
+        };
+        if (item.cost && item.cost > 0) {
+            spRecord.precio = Number(item.cost);
+        }
+        batch.set(doc(db, "spare_parts", spId), spRecord);
     });
     await batch.commit();
+    showToast('Solicitud creada y registrada en Repuestos.', 'success');
     setActiveTab('LOGISTICS');
     setRequestItems([]);
     setRequestMode('MENU');
@@ -4350,9 +4391,9 @@ export default function App() {
                     }
                 };
 
-                // ── Vaciar base de repuestos para volver a subir limpio ────
+                // ── Vaciar base de repuestos (solo Admin / Alexis) ────────
                 const handleClearSpareParts = async () => {
-                    if (spareParts.length === 0 || !currentUser) return;
+                    if (!canManageSpareParts || spareParts.length === 0 || !currentUser) return;
                     const confirmed = await showConfirm(`⚠ ¿Eliminar TODOS los ${spareParts.length} registros de repuestos actuales para volver a subir el archivo limpio? Esta acción no se puede deshacer.`);
                     if (!confirmed) return;
 
@@ -4368,25 +4409,203 @@ export default function App() {
                     }
                 };
 
+                // ── Eliminar un repuesto individual (Admin / Alexis) ───────
+                const handleDeleteSparePart = async (sp: SparePart) => {
+                    if (!canManageSpareParts || !currentUser) return;
+                    const confirmed = await showConfirm(`¿Eliminar el repuesto "${sp.pn} - ${sp.descripcion}" del catálogo?\n\nEsta acción no se puede deshacer.`);
+                    if (!confirmed) return;
+                    try {
+                        await deleteDoc(doc(db, 'spare_parts', sp.id));
+                        showToast('Repuesto eliminado correctamente.', 'success');
+                    } catch (err: any) {
+                        showError(`Error al eliminar: ${err.message}`);
+                    }
+                };
+
+                // ── Actualizar repuesto editado ────────────────────────────
+                const handleUpdateSparePart = async (e: React.FormEvent) => {
+                    e.preventDefault();
+                    if (!editingSparePart || !currentUser) return;
+                    const fd = new FormData(e.target as HTMLFormElement);
+                    const rawPrecio = (fd.get('precio') as string || '').trim();
+                    const numPrecio = rawPrecio ? parseFloat(rawPrecio) : undefined;
+                    const fechaPed = (fd.get('fecha_pedido') as string || '').trim();
+
+                    // Recalcular mes y año automáticamente si fecha_pedido está presente
+                    let anioVal = editingSparePart.anio;
+                    let mesVal = editingSparePart.mes;
+                    if (fechaPed) {
+                        const dp = getSparePartDateParts({ ...editingSparePart, fecha_pedido: fechaPed });
+                        if (dp.anio) anioVal = Number(dp.anio);
+                        if (dp.mes) {
+                            const mesIdx = Number(dp.mes) - 1;
+                            const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+                            if (mesIdx >= 0 && mesIdx < 12) mesVal = monthNames[mesIdx];
+                        }
+                    }
+
+                    const updatedData: any = {
+                        pn: (fd.get('pn') as string || '').trim(),
+                        cantidad: Number(fd.get('cantidad')) || 1,
+                        descripcion: (fd.get('descripcion') as string || '').trim(),
+                        cliente: (fd.get('cliente') as string || '').trim(),
+                        mod: (fd.get('mod') as string || '').trim(),
+                        equipo: (fd.get('equipo') as string || '').trim(),
+                        condicion: (fd.get('condicion') as string || '').trim(),
+                        orden_ge: (fd.get('orden_ge') as string || '').trim(),
+                        workflow_id: (fd.get('workflow_id') as string || '').trim(),
+                        fecha_pedido: fechaPed,
+                        fecha_instalacion: (fd.get('fecha_instalacion') as string || '').trim(),
+                        fecha_llegada: (fd.get('fecha_llegada') as string || '').trim(),
+                        observacion: (fd.get('observacion') as string || '').trim(),
+                        anio: anioVal,
+                        mes: mesVal,
+                    };
+                    if (numPrecio !== undefined && !isNaN(numPrecio)) {
+                        updatedData.precio = numPrecio;
+                    }
+
+                    try {
+                        await updateDoc(doc(db, 'spare_parts', editingSparePart.id), updatedData);
+                        showToast('Repuesto actualizado con éxito.', 'success');
+                        setEditingSparePart(null);
+                    } catch (err: any) {
+                        showError(`Error al actualizar: ${err.message}`);
+                    }
+                };
+
+                // ── Sincronizar solicitudes y activos existentes a Repuestos 
+                const handleSyncFromRequests = async () => {
+                    if (!currentUser || assets.length === 0) return;
+                    const existingAssetIds = new Set(spareParts.map(sp => sp.asset_id).filter(Boolean));
+                    const pendingAssets = assets.filter(a => !existingAssetIds.has(a.id));
+                    if (pendingAssets.length === 0) {
+                        showToast('Todas las solicitudes existentes ya se encuentran en Repuestos.', 'info');
+                        return;
+                    }
+                    const confirmed = await showConfirm(`¿Sincronizar ${pendingAssets.length} solicitudes/activos existentes a la Base de Repuestos?`);
+                    if (!confirmed) return;
+
+                    try {
+                        const batch = writeBatch(db);
+                        const now = new Date();
+                        const pad = (n: number) => String(n).padStart(2, '0');
+                        const defaultFecha = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+                        const mesNombre = now.toLocaleString('es-ES', { month: 'long' });
+                        const capitalizedMes = mesNombre.charAt(0).toUpperCase() + mesNombre.slice(1);
+
+                        pendingAssets.forEach(a => {
+                            const spId = generateUUID();
+                            let fechaPed = defaultFecha;
+                            let anioVal = now.getFullYear();
+                            let mesVal = capitalizedMes;
+
+                            if (a.metadata.fecha_solicitud) {
+                                const d = new Date(a.metadata.fecha_solicitud);
+                                if (!isNaN(d.getTime())) {
+                                    fechaPed = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+                                    anioVal = d.getFullYear();
+                                    const mName = d.toLocaleString('es-ES', { month: 'long' });
+                                    mesVal = mName.charAt(0).toUpperCase() + mName.slice(1);
+                                }
+                            }
+
+                            const spRecord: any = {
+                                id: spId,
+                                pn: a.metadata.pn || '',
+                                descripcion: a.metadata.description || '',
+                                cantidad: a.metadata.cantidad || 1,
+                                cliente: a.metadata.cliente_final || '',
+                                mod: a.metadata.equipo_destino || '',
+                                equipo: a.metadata.equipo_destino || '',
+                                workflow_id: a.metadata.workflow_id || '',
+                                orden_ge: a.metadata.numero_orden_ge || '',
+                                condicion: a.metadata.condicion || '',
+                                observacion: `Sincronizado desde Solicitud (${a.current_status})`,
+                                mes: mesVal,
+                                anio: anioVal,
+                                fecha_pedido: fechaPed,
+                                fecha_llegada: '',
+                                fecha_despacho: a.current_status === AssetStatus.DISPATCHED ? fechaPed : '',
+                                fecha_egreso: '',
+                                fecha_instalacion: '',
+                                fecha_llegada_tentativa: '',
+                                asset_id: a.id,
+                                created_by: currentUser.name || currentUser.id,
+                                created_at: a.metadata.fecha_solicitud || now.toISOString(),
+                                source: 'SOLICITUD'
+                            };
+                            if (a.metadata.cost && a.metadata.cost > 0) {
+                                spRecord.precio = a.metadata.cost;
+                            }
+                            batch.set(doc(db, "spare_parts", spId), spRecord);
+                        });
+                        await batch.commit();
+                        showToast(`✅ ${pendingAssets.length} solicitudes sincronizadas a Repuestos.`, 'success');
+                    } catch (err: any) {
+                        showError(`Error al sincronizar solicitudes: ${err.message}`);
+                    }
+                };
+
+                // Helper para formatear fechas de exportación en formato DD/MM/AAAA
+                const formatExportDate = (val: any): string => {
+                    if (!val && val !== 0) return '';
+                    const num = Number(val);
+                    if (!isNaN(num) && num > 20000 && num < 80000 && !String(val).includes('/') && !String(val).includes('-')) {
+                        const d = new Date(Date.UTC(1899, 11, 30) + num * 86400000);
+                        if (!isNaN(d.getTime())) {
+                            return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+                        }
+                    }
+                    const str = String(val).trim();
+                    const sep = str.includes('/') ? '/' : str.includes('-') ? '-' : null;
+                    if (sep) {
+                        const p = str.split('T')[0].split(sep);
+                        if (p.length === 3) {
+                            const p0 = p[0].trim();
+                            const p1 = p[1].trim();
+                            const p2 = p[2].trim();
+                            if (p0.length === 4 || (Number(p0) > 31 && Number(p0) < 2100)) {
+                                const y = p0.length === 2 ? `20${p0}` : p0;
+                                return `${p2.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
+                            }
+                            let y = p2;
+                            if (y.length === 2) y = `20${y}`;
+                            return `${p0.padStart(2, '0')}/${p1.padStart(2, '0')}/${y}`;
+                        }
+                    }
+                    return str;
+                };
+
                 // ── Exportar Excel ─────────────────────────────────────────
                 const handleExportSpareParts = () => {
                     const rows = filteredSpareParts.map(sp => ({
-                        'P/N': sp.pn, 'DESCRIPCIÓN': sp.descripcion, 'CANTIDAD': sp.cantidad,
-                        'CLIENTE': sp.cliente, 'MOD': sp.mod, 'EQUIPO': sp.equipo,
-                        'WF': sp.workflow_id, 'ORDEN GE': sp.orden_ge, 'CONDICIÓN': sp.condicion,
+                        'P/N': sp.pn,
+                        'DESCRIPCIÓN': sp.descripcion,
+                        'CANTIDAD': sp.cantidad,
+                        'CLIENTE': sp.cliente,
+                        'MOD': sp.mod,
+                        'EQUIPO': sp.equipo,
+                        'WF': sp.workflow_id,
+                        'ORDEN GE': sp.orden_ge,
+                        'CONDICIÓN': sp.condicion,
                         'PRECIO': sp.precio !== undefined ? sp.precio : '',
-                        'OBSERVACIÓN': sp.observacion, 'MES': sp.mes, 'AÑO': sp.anio,
-                        'FECHA PEDIDO': sp.fecha_pedido, 'FECHA LLEGADA': sp.fecha_llegada,
-                        'FECHA DESPACHO': sp.fecha_despacho, 'EGRESO': sp.fecha_egreso,
-                        'FECHA INSTALACIÓN': sp.fecha_instalacion,
-                        'LLEGADA TENTATIVA': sp.fecha_llegada_tentativa,
-                        'ORIGEN': sp.source,
+                        'OBSERVACIÓN': sp.observacion,
+                        'MES': sp.mes,
+                        'AÑO': sp.anio,
+                        'FECHA PEDIDO': formatExportDate(sp.fecha_pedido),
+                        'FECHA LLEGADA': formatExportDate(sp.fecha_llegada),
+                        'FECHA DESPACHO': formatExportDate(sp.fecha_despacho),
+                        'EGRESO': formatExportDate(sp.fecha_egreso),
+                        'FECHA INSTALACIÓN': formatExportDate(sp.fecha_instalacion),
+                        'LLEGADA TENTATIVA': formatExportDate(sp.fecha_llegada_tentativa),
+                        'ORIGEN': sp.source === 'CSV_IMPORT' ? 'CSV' : sp.source === 'SOLICITUD' ? 'SOLICITUD' : 'MANUAL',
                     }));
                     const wb = XLSX.utils.book_new();
                     const ws = XLSX.utils.json_to_sheet(rows);
                     XLSX.utils.book_append_sheet(wb, ws, 'REPUESTOS');
                     XLSX.writeFile(wb, `BASE_REPUESTOS_${new Date().toISOString().slice(0,10)}.xlsx`);
-                    showToast('Excel exportado correctamente.', 'success');
+                    showToast(`Excel con ${rows.length} repuestos exportado correctamente.`, 'success');
                 };
 
                 return (
@@ -4408,8 +4627,20 @@ export default function App() {
                                     {csvImporting ? 'Importando...' : 'Importar CSV/Excel'}
                                     <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleCsvImport} disabled={csvImporting}/>
                                 </label>
-                                {/* Limpiar catálogo actual */}
-                                {spareParts.length > 0 && (
+
+                                {/* Sincronizar desde Solicitudes existentes */}
+                                {assets.length > 0 && (
+                                    <button 
+                                        onClick={handleSyncFromRequests}
+                                        title="Sincronizar repuestos provenientes de solicitudes y activos del sistema"
+                                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 transition-all"
+                                    >
+                                        <RefreshCw size={13}/> Sincronizar Solicitudes
+                                    </button>
+                                )}
+
+                                {/* Limpiar catálogo actual (solo Admin / Alexis) */}
+                                {canManageSpareParts && spareParts.length > 0 && (
                                     <button 
                                         onClick={handleClearSpareParts}
                                         title="Eliminar todos los registros para volver a subir el archivo limpio"
@@ -4418,11 +4649,13 @@ export default function App() {
                                         <Trash2 size={13}/> Vaciar base
                                     </button>
                                 )}
+
                                 {/* Exportar */}
                                 <button onClick={handleExportSpareParts} disabled={filteredSpareParts.length === 0}
                                     className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all disabled:opacity-40">
                                     <Download size={14}/> Exportar Excel
                                 </button>
+
                                 {/* Nuevo manual */}
                                 <button onClick={() => setShowSparePartModal(true)}
                                     className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-sm">
@@ -4620,6 +4853,9 @@ export default function App() {
                                                 </th>
                                                 <th className="px-4 py-3">F. Instalación</th>
                                                 <th className="px-4 py-3 text-center">Origen</th>
+                                                {canManageSpareParts && (
+                                                    <th className="px-4 py-3 text-right">Acciones</th>
+                                                )}
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
@@ -4739,6 +4975,28 @@ export default function App() {
                                                             {sp.source === 'CSV_IMPORT' ? 'CSV' : sp.source === 'SOLICITUD' ? 'Solicitud' : 'Manual'}
                                                         </span>
                                                     </td>
+                                                    {canManageSpareParts && (
+                                                        <td className="px-4 py-3 text-right whitespace-nowrap">
+                                                            <div className="flex items-center justify-end gap-1">
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={() => setEditingSparePart(sp)} 
+                                                                    title="Editar repuesto"
+                                                                    className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all"
+                                                                >
+                                                                    <Edit3 size={15}/>
+                                                                </button>
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={() => handleDeleteSparePart(sp)} 
+                                                                    title="Eliminar repuesto"
+                                                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-all"
+                                                                >
+                                                                    <Trash2 size={15}/>
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -4866,6 +5124,94 @@ export default function App() {
                                             <button type="submit"
                                                 className="px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-2">
                                                 <Save size={14}/> Guardar Repuesto
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Modal Editar Repuesto (Admin / Alexis) ── */}
+                        {editingSparePart && (
+                            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                                <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden animate-fadeIn">
+                                    <div className="bg-blue-600 p-5 flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <Edit3 size={22} className="text-white"/>
+                                            <div>
+                                                <h3 className="font-black text-white uppercase tracking-wider text-sm">Editar Repuesto</h3>
+                                                <p className="text-[11px] text-blue-100 font-mono mt-0.5">P/N: {editingSparePart.pn} &bull; ID: {editingSparePart.id}</p>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => setEditingSparePart(null)} className="text-white/70 hover:text-white"><X size={20}/></button>
+                                    </div>
+                                    <form onSubmit={handleUpdateSparePart} className="p-6 grid grid-cols-2 gap-4 max-h-[80vh] overflow-y-auto">
+                                        <div className="col-span-2 grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">P/N (Part Number) *</label>
+                                                <input required name="pn" defaultValue={editingSparePart.pn} className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Cantidad *</label>
+                                                <input required name="cantidad" type="number" min="1" defaultValue={editingSparePart.cantidad || 1} className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                            </div>
+                                        </div>
+                                        <div className="col-span-2">
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Descripción *</label>
+                                            <input required name="descripcion" defaultValue={editingSparePart.descripcion} className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Cliente *</label>
+                                            <input required name="cliente" defaultValue={editingSparePart.cliente} className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">MOD (Modalidad)</label>
+                                            <input name="mod" defaultValue={editingSparePart.mod} placeholder="CT, MR, XR..." className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Equipo / Modelo</label>
+                                            <input name="equipo" defaultValue={editingSparePart.equipo} className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Condición</label>
+                                            <input name="condicion" defaultValue={editingSparePart.condicion} placeholder="COMPRA, GARANTIA..." className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Precio (USD)</label>
+                                            <input name="precio" type="number" step="0.01" defaultValue={editingSparePart.precio !== undefined ? editingSparePart.precio : ''} placeholder="0.00" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Orden GE</label>
+                                            <input name="orden_ge" defaultValue={editingSparePart.orden_ge} className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Workflow ID</label>
+                                            <input name="workflow_id" defaultValue={editingSparePart.workflow_id} className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Fecha Pedido</label>
+                                            <input name="fecha_pedido" defaultValue={editingSparePart.fecha_pedido} placeholder="DD/MM/AAAA" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Fecha Instalación</label>
+                                            <input name="fecha_instalacion" defaultValue={editingSparePart.fecha_instalacion} placeholder="DD/MM/AAAA" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Fecha Llegada</label>
+                                            <input name="fecha_llegada" defaultValue={editingSparePart.fecha_llegada} placeholder="DD/MM/AAAA" className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                        </div>
+                                        <div className="col-span-2">
+                                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Observación</label>
+                                            <textarea name="observacion" rows={2} defaultValue={editingSparePart.observacion} className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none resize-none" placeholder="Notas adicionales..."/>
+                                        </div>
+                                        <div className="col-span-2 flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+                                            <button type="button" onClick={() => setEditingSparePart(null)}
+                                                className="px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                                                Cancelar
+                                            </button>
+                                            <button type="submit"
+                                                className="px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-sm">
+                                                <Save size={14}/> Guardar Cambios
                                             </button>
                                         </div>
                                     </form>
