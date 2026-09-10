@@ -36,7 +36,9 @@ import {
   Save,
   TrendingUp,
   Award,
-  Building2
+  Building2,
+  DollarSign,
+  Wrench
 } from 'lucide-react';
 import { FilterSelect } from '../ui/FilterSelect';
 import { generateUUID, sanitizeRow, normalizeSparePartCondition } from '../../utils/helpers';

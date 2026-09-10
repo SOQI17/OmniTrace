@@ -547,16 +547,18 @@ export default function App() {
   }, []);
 
   // ─── Toast helpers ───────────────────────────────────────────────────────
-  const dismissToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
+  // Estabilizados con useCallback: se pasan como props a módulos memo() y una
+  // referencia nueva en cada render de App rompería su memoización.
+  const dismissToast = useCallback((id: string) => setToasts(prev => prev.filter(t => t.id !== id)), []);
 
-  const showToast = (message: string, type: ToastType = 'info', duration = 4000) => {
+  const showToast = useCallback((message: string, type: ToastType = 'info', duration = 4000) => {
     const id = generateUUID();
     setToasts(prev => [...prev, { id, type, message }]);
     if (type !== 'confirm') setTimeout(() => dismissToast(id), duration);
     return id;
-  };
+  }, [dismissToast]);
 
-  const showConfirm = (message: string): Promise<boolean> =>
+  const showConfirm = useCallback((message: string): Promise<boolean> =>
     new Promise(resolve => {
       const id = generateUUID();
       setToasts(prev => [...prev, {
@@ -564,10 +566,10 @@ export default function App() {
         onConfirm: () => resolve(true),
         onCancel:  () => resolve(false),
       }]);
-    });
+    }), []);
 
   // Backward-compat helper (replaces showError calls)
-  const showError = (msg: string) => showToast(msg, 'error', 5000);
+  const showError = useCallback((msg: string) => showToast(msg, 'error', 5000), [showToast]);
 
   useEffect(() => {
     if (darkMode) {
@@ -607,7 +609,6 @@ export default function App() {
   
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'REQUEST' | 'LOGISTICS' | 'WAREHOUSE' | 'SCANNER' | 'DOCS' | 'RETURNS' | 'ADMIN' | 'SPAREPARTS'>('DASHBOARD');
   const [requestMode, setRequestMode] = useState<'MENU' | 'PARTS' | 'EQUIPMENT' | 'TOOLS'>('MENU');
-  const [logisticsSubTab, setLogisticsSubTab] = useState<'INITIAL' | 'FINAL' | 'HISTORY'>('INITIAL');
   const [warehouseSubTab, setWarehouseSubTab] = useState<'ENTRY' | 'MOVEMENTS' | 'INVENTORY'>('INVENTORY');
   
   const [selectedInventoryItem, setSelectedInventoryItem] = useState<string | null>(null);
@@ -651,8 +652,6 @@ export default function App() {
 
 // (State modularizado en módulos independientes)
 
-
-  const selectedAsset = assets.find(a => a.id === selectedAssetId);
 
   const assetsByOrder = assets.reduce<Record<string, Asset[]>>((acc, asset) => {
       const orderId = asset.metadata.numero_orden_ge || 'SIN_ORDEN';
@@ -884,8 +883,6 @@ export default function App() {
   // ─── Keyboard shortcuts ───────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      const typing = ['INPUT','TEXTAREA','SELECT'].includes(tag);
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
         setShowSearchResults(true);
@@ -898,48 +895,15 @@ export default function App() {
       if (e.key === 'Escape') {
         setShowSearchResults(false);
         setGlobalSearchTerm('');
-        setPreviewDoc(null);
-        setPreviewDataUrl(null);
-        // Modales de bodega se gestionan dentro de WarehouseModule
-        setShowComments(false);
-      }
-      if (!typing && (e.ctrlKey || e.metaKey) && e.key === 's' && activeTab === 'LOGISTICS' && logisticsSubTab === 'FINAL') {
-        e.preventDefault();
-        handleUpdateLogisticsFinal();
+        // Modales de bodega, docs y logística se gestionan dentro de cada módulo
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [activeTab, logisticsSubTab]);
+  }, []);
 
-  // ─── Comments / notas por orden ───────────────────────────────────────────
-  const [comments, setComments] = useState<Record<string, {id:string; text:string; user:string; ts:string}[]>>({});
-  const [newComment, setNewComment] = useState('');
-  const [showComments, setShowComments] = useState(false);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    const unsubComments = onSnapshot(
-      collection(db, "order_comments"),
-      (snap) => {
-        const data: Record<string, any[]> = {};
-        snap.docs.forEach(d => { data[d.id] = d.data().comments || []; });
-        setComments(data);
-      },
-      () => {}
-    );
-    return () => unsubComments();
-  }, [currentUser]);
-
-  const handleAddComment = async () => {
-    if (!newComment.trim() || !selectedAsset || !currentUser) return;
-    const orderId = selectedAsset.metadata.numero_orden_ge;
-    const existing = comments[orderId] || [];
-    const entry = { id: generateUUID(), text: newComment.trim(), user: currentUser.name, ts: new Date().toISOString() };
-    await setDoc(doc(db, "order_comments", orderId), { comments: [...existing, entry] });
-    setNewComment('');
-  };
-
+  // Nota: los comentarios por orden se gestionan internamente en LogisticsModule
+  // (su propio listener de 'order_comments'); ya no hay estado espejo aquí.
 
   const isAdmin = currentUser?.role === 'ADMIN';
   const canManageSpareParts = isAdmin || Boolean(currentUser?.name && currentUser.name.toLowerCase().includes('alexis'));
@@ -1038,6 +1002,22 @@ export default function App() {
   }, [currentUser]);
 
   // (Handlers de solicitudes, logística, retornos, documentos y escáner modularizados)
+
+  // Handlers estables (useCallback) para los módulos memo(): una función nueva
+  // en cada render de App forzaría su re-render aunque sus props reales no cambien.
+  const handleRequestSuccessNavigate = useCallback(() => setActiveTab('LOGISTICS'), []);
+
+  const handleNavigateToWarehouse = useCallback(() => {
+    setActiveTab('WAREHOUSE');
+    setWarehouseSubTab('ENTRY');
+  }, []);
+
+  const handleOpenDigitalEgress = useCallback((origin: 'REPUESTOS' | 'BODEGA', client: string, items: DigitalEgressItem[]) => {
+    setDigitalEgressOrigin(origin);
+    setDigitalEgressInitialClient(client);
+    setDigitalEgressItems(items);
+    setDigitalEgressModalOpen(true);
+  }, []);
 
   if (loadingAuth) return <div className="p-10 text-slate-500 font-medium">Cargando OmniTrace...</div>;
   if (!currentUser) return <AppErrorBoundary><LoginScreen /></AppErrorBoundary>;
@@ -1215,7 +1195,7 @@ export default function App() {
                   assets={assets}
                   currentUser={currentUser}
                   canCreateRequest={canCreateRequest}
-                  onSuccessNavigate={() => setActiveTab('LOGISTICS')}
+                  onSuccessNavigate={handleRequestSuccessNavigate}
                   showToast={showToast}
                 />
             )}
@@ -1230,10 +1210,8 @@ export default function App() {
                   selectedAssetId={selectedAssetId}
                   onSelectAsset={setSelectedAssetId}
                   logs={logs}
-                  onNavigateToWarehouse={() => {
-                    setActiveTab('WAREHOUSE');
-                    setWarehouseSubTab('ENTRY');
-                  }}
+                  onNavigateToWarehouse={handleNavigateToWarehouse}
+                  onOpenDigitalEgress={handleOpenDigitalEgress}
                   showToast={showToast}
                   showError={showError}
                   showConfirm={showConfirm}
@@ -1272,12 +1250,7 @@ export default function App() {
                 showToast={showToast}
                 showError={showError}
                 showConfirm={showConfirm}
-                onOpenDigitalEgress={(origin, client, items) => {
-                  setDigitalEgressOrigin(origin);
-                  setDigitalEgressInitialClient(client);
-                  setDigitalEgressItems(items);
-                  setDigitalEgressModalOpen(true);
-                }}
+                onOpenDigitalEgress={handleOpenDigitalEgress}
               />
             )}
 
@@ -1299,12 +1272,7 @@ export default function App() {
                 setActiveTab={setActiveTab}
                 selectedSparePartIds={selectedSparePartIds}
                 setSelectedSparePartIds={setSelectedSparePartIds}
-                onOpenDigitalEgress={(origin, client, items) => {
-                  setDigitalEgressOrigin(origin);
-                  setDigitalEgressInitialClient(client);
-                  setDigitalEgressItems(items);
-                  setDigitalEgressModalOpen(true);
-                }}
+                onOpenDigitalEgress={handleOpenDigitalEgress}
               />
             )}
 

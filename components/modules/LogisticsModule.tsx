@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
-import { 
-  Asset, 
-  AssetStatus, 
-  ImportationCosts, 
-  ImportItem, 
-  User, 
-  AuditLogEntry 
+import {
+  Asset,
+  AssetStatus,
+  ImportationCosts,
+  ImportItem,
+  User,
+  AuditLogEntry,
+  DigitalEgressItem
 } from '../../types';
 import { db } from '../../firebase';
 import { collection, doc, writeBatch, addDoc, onSnapshot, setDoc } from 'firebase/firestore';
@@ -34,7 +35,9 @@ import {
   Trash2,
   X,
   ExternalLink,
-  RotateCcw
+  RotateCcw,
+  Loader2,
+  Edit3
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FilterSelect } from '../ui/FilterSelect';
@@ -53,6 +56,7 @@ interface LogisticsModuleProps {
   onSelectAsset: (id: string | null) => void;
   logs?: AuditLogEntry[];
   onNavigateToWarehouse?: () => void;
+  onOpenDigitalEgress: (origin: 'REPUESTOS' | 'BODEGA', client: string, items: DigitalEgressItem[]) => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
   showError: (msg: string) => void;
   showConfirm: (msg: string) => Promise<boolean>;
@@ -132,6 +136,7 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
   onSelectAsset,
   logs = [],
   onNavigateToWarehouse,
+  onOpenDigitalEgress,
   showToast,
   showError,
   showConfirm
@@ -821,18 +826,15 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
                     <button
                         type="button"
                         onClick={() => {
-                            setDigitalEgressOrigin('REPUESTOS');
                             const reqClient = mainAsset.metadata.cliente_final && mainAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK'
                                 ? mainAsset.metadata.cliente_final.trim()
                                 : '';
-                            setDigitalEgressInitialClient(reqClient);
-                            setDigitalEgressItems(group.map(a => ({
+                            onOpenDigitalEgress('REPUESTOS', reqClient, group.map(a => ({
                                 codigo: a.metadata.pn,
                                 cantidad: Number(a.metadata.cantidad) || 1,
                                 descripcion: a.metadata.description,
                                 serial_number: a.metadata.serial_ge && a.metadata.serial_ge !== 'PENDIENTE' ? a.metadata.serial_ge : ''
                             })));
-                            setDigitalEgressModalOpen(true);
                         }}
                         title="Generar Egreso Digital para esta Solicitud"
                         className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
@@ -889,18 +891,15 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
                                         <div className="flex items-center gap-2">
                                             <button
                                                 onClick={() => {
-                                                    setDigitalEgressOrigin('REPUESTOS');
-                                                    const reqClient = selectedAsset.metadata.cliente_final && selectedAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK' 
-                                                        ? selectedAsset.metadata.cliente_final.trim() 
+                                                    const reqClient = selectedAsset.metadata.cliente_final && selectedAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK'
+                                                        ? selectedAsset.metadata.cliente_final.trim()
                                                         : '';
-                                                    setDigitalEgressInitialClient(reqClient);
-                                                    setDigitalEgressItems([{
+                                                    onOpenDigitalEgress('REPUESTOS', reqClient, [{
                                                         codigo: selectedAsset.metadata.pn,
                                                         cantidad: Number(selectedAsset.metadata.cantidad) || 1,
                                                         descripcion: selectedAsset.metadata.description,
                                                         serial_number: selectedAsset.metadata.serial_ge && selectedAsset.metadata.serial_ge !== 'PENDIENTE' ? selectedAsset.metadata.serial_ge : ''
                                                     }]);
-                                                    setDigitalEgressModalOpen(true);
                                                 }}
                                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-sm"
                                                 title="Generar Egreso Digital para esta solicitud"
