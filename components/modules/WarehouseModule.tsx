@@ -138,6 +138,7 @@ const SearchableSelect = ({ options, value, onChange, placeholder }: {
 
 export interface WarehouseModuleProps {
   assets: Asset[];
+  initialInventorySearch?: string;
   logs: AuditLogEntry[];
   currentUser: User | null;
   canEditWarehouse: boolean;
@@ -149,6 +150,7 @@ export interface WarehouseModuleProps {
 
 export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
   assets,
+  initialInventorySearch,
   logs,
   currentUser,
   canEditWarehouse,
@@ -165,8 +167,15 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
   const [showDispatchModal, setShowDispatchModal] = useState(false);
   const [dispatchData, setDispatchData] = useState({ quantity: 1, reason: '', destination: '', employee: '' });
   const [importing, setImporting] = useState(false);
-  const [inventorySearch, setInventorySearch] = useState('');
+  const [inventorySearch, setInventorySearch] = useState(initialInventorySearch || '');
   const [selectedInventoryItem, setSelectedInventoryItem] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialInventorySearch) {
+      setInventorySearch(initialInventorySearch);
+      setWarehouseSubTab('INVENTORY');
+    }
+  }, [initialInventorySearch]);
 
   // Computes inventory aggregated by P/N
   const inventoryStats = useMemo(() => {

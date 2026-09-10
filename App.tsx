@@ -629,6 +629,7 @@ export default function App() {
 
   const [globalSearchTerm, setGlobalSearchTerm] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
+  const [warehouseSearchQuery, setWarehouseSearchQuery] = useState('');
   const [docSearchTerm, setDocSearchTerm] = useState('');
 
   const [assets, setAssets] = useState<Asset[]>([]);
