@@ -11,16 +11,19 @@ import {
   ImportationCosts,
   ImportItem,
   StoredDocument,
-  SparePart
+  SparePart,
+  DigitalEgressRecord,
+  DigitalEgressItem
 } from './types';
 import { AssetLifecycleService } from './services/AssetLifecycleService';
 import { AssetLabelPDF } from './components/AssetLabelPDF';
+import { DigitalEgressModal } from './components/DigitalEgressModal';
 import { LoginScreen } from './components/LoginScreen';
 import { auth, db } from './firebase';
 import { signOut, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
 import {
   collection, doc, onSnapshot, writeBatch,
-  query, orderBy, updateDoc, deleteDoc, setDoc, getDocs, where
+  query, orderBy, updateDoc, deleteDoc, setDoc, getDocs, where, addDoc
 } from 'firebase/firestore';
 import { 
   Truck, 
@@ -896,6 +899,14 @@ export default function App() {
   const [sparePartsPage, setSparePartsPage] = useState(1);
   const [sparePartsPageSize, setSparePartsPageSize] = useState(50);
 
+  // ─── Egreso Digital (Repuestos & Bodega) ──────────────────────────────────
+  const [digitalEgressModalOpen, setDigitalEgressModalOpen] = useState(false);
+  const [digitalEgressItems, setDigitalEgressItems] = useState<DigitalEgressItem[]>([]);
+  const [digitalEgressInitialClient, setDigitalEgressInitialClient] = useState('');
+  const [digitalEgressOrigin, setDigitalEgressOrigin] = useState<'REPUESTOS' | 'BODEGA'>('REPUESTOS');
+  const [digitalEgresses, setDigitalEgresses] = useState<DigitalEgressRecord[]>([]);
+  const [selectedSparePartIds, setSelectedSparePartIds] = useState<Set<string>>(new Set());
+
   // Debounce del buscador — actualiza solo 250ms después de que el usuario deja de escribir
   const sparePartsSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleSparePartsSearchChange = (value: string) => {
@@ -1418,8 +1429,113 @@ export default function App() {
       },
       () => setSparePartsLoading(false)
     );
-    return () => unsubSpareParts();
+    const unsubEgress = onSnapshot(
+      collection(db, 'egresos_digitales'),
+      (snapshot) => {
+        const records: DigitalEgressRecord[] = [];
+        snapshot.forEach(d => {
+          records.push({ id: d.id, ...d.data() } as DigitalEgressRecord);
+        });
+        records.sort((a, b) => (b.numero || 0) - (a.numero || 0));
+        setDigitalEgresses(records);
+      },
+      (err) => console.warn('Error al cargar egresos digitales:', err)
+    );
+    return () => { unsubSpareParts(); unsubEgress(); };
   }, [currentUser]);
+
+  // Numeración correlativa automática para Egreso Digital que inicia en 1
+  const nextEgressNumber = useMemo(() => {
+    if (digitalEgresses.length === 0) return 1;
+    const maxNum = Math.max(...digitalEgresses.map(e => Number(e.numero) || 0));
+    return maxNum >= 1 ? maxNum + 1 : 1;
+  }, [digitalEgresses]);
+
+  // ─── Confirmar y Guardar Egreso Digital ──────────────────────────────────
+  const handleConfirmDigitalEgress = async (egress: DigitalEgressRecord) => {
+    if (!currentUser) return;
+    try {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const fechaEgresoStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+
+      // 1. Guardar documento en Firestore
+      await setDoc(doc(db, 'egresos_digitales', egress.id), egress);
+
+      // 2. Si proviene de REPUESTOS, actualizar fecha_egreso en spare_parts
+      if (egress.origen === 'REPUESTOS') {
+        const batch = writeBatch(db);
+        let count = 0;
+        egress.items.forEach(it => {
+          if (it.spare_part_id) {
+            batch.update(doc(db, 'spare_parts', it.spare_part_id), {
+              fecha_egreso: fechaEgresoStr
+            });
+            count++;
+          }
+        });
+        if (count > 0) {
+          await batch.commit();
+        }
+        setSelectedSparePartIds(new Set());
+      }
+
+      // 3. Si proviene de BODEGA, actualizar custodio/despacho en los activos
+      if (egress.origen === 'BODEGA') {
+        for (const it of egress.items) {
+          const matchingAssets = assets.filter(
+            a => a.metadata.pn === it.codigo && a.current_status === AssetStatus.RECEIVED_WH
+          );
+          let remaining = it.cantidad;
+          for (const a of matchingAssets) {
+            if (remaining <= 0) break;
+            const inStock = a.metadata.cantidad || 1;
+            const updated = AssetLifecycleService.updateField(
+              a,
+              'warehouse',
+              { 
+                responsable_egreso: egress.responsable, 
+                destino_final: egress.cliente, 
+                motivo_salida: `Egreso Digital #${egress.numero}` 
+              },
+              currentUser
+            ).updatedAsset;
+
+            await updateDoc(doc(db, 'assets', a.id), {
+              current_status: AssetStatus.DISPATCHED,
+              warehouse: updated.warehouse
+            });
+            remaining -= inStock;
+          }
+        }
+      }
+
+      // 4. Auditoría
+      try {
+        await addDoc(collection(db, 'audit_log'), {
+          asset_id: `EGRESO_${egress.numero}`,
+          actor_id: currentUser.name || currentUser.id || 'ADMIN',
+          action: 'DIGITAL_EGRESS',
+          prev_value: null,
+          new_value: {
+            numero: egress.numero,
+            cliente: egress.cliente,
+            responsable: egress.responsable,
+            total_items: egress.items.length,
+            origen: egress.origen
+          },
+          timestamp: new Date().toISOString()
+        });
+      } catch (auditErr) {
+        console.warn('Error en auditoría de egreso:', auditErr);
+      }
+
+      showToast(`✅ ${egress.titulo} registrado con éxito.`, 'success', 5000);
+    } catch (err: any) {
+      showError(`Error al registrar egreso digital: ${err.message}`);
+      throw err;
+    }
+  };
 
 
   useEffect(() => {
@@ -4361,6 +4477,18 @@ export default function App() {
                                     <input type="text" placeholder="Buscar por sku o descripción..." value={inventorySearch} onChange={(e) => setInventorySearch(e.target.value)} className="w-full pl-12 pr-6 py-3.5 border border-slate-200 dark:border-slate-700 rounded-lg focus:border-slate-800 focus:ring-0 outline-none font-bold text-sm bg-slate-50 dark:bg-slate-900 dark:text-white"/>
                                 </div>
                                 <div className="flex w-full md:w-auto gap-4">
+                                    <button 
+                                        onClick={() => {
+                                            setDigitalEgressOrigin('BODEGA');
+                                            setDigitalEgressInitialClient('');
+                                            setDigitalEgressItems([]);
+                                            setDigitalEgressModalOpen(true);
+                                        }} 
+                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all shadow-md active:scale-95"
+                                        title="Crear un Egreso Digital oficial seleccionando repuestos o inventario"
+                                    >
+                                        <FileText size={18}/> Egreso Digital
+                                    </button>
                                     {canEditWarehouse && (
                                         <button onClick={handleImportInitialInventory} disabled={importing} className={`flex-1 bg-slate-900 dark:bg-blue-600 text-white px-6 py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-slate-800 dark:hover:bg-blue-700 transition-all shadow-md active:scale-95 ${importing ? 'opacity-50 cursor-not-allowed' : ''}`}>
                                             {importing ? <Loader2 size={18} className="animate-spin"/> : <Database size={18}/>} Importar PDF
@@ -4430,6 +4558,23 @@ export default function App() {
                                                     </td>
                                                     <td className="p-5 text-center">
                                                         <div className="flex items-center justify-center gap-3">
+                                                            <button 
+                                                                onClick={() => {
+                                                                    setDigitalEgressOrigin('BODEGA');
+                                                                    setDigitalEgressInitialClient('');
+                                                                    setDigitalEgressItems([{
+                                                                        codigo: item.pn,
+                                                                        cantidad: 1,
+                                                                        descripcion: item.description,
+                                                                        serial_number: ''
+                                                                    }]);
+                                                                    setDigitalEgressModalOpen(true);
+                                                                }} 
+                                                                className="p-2.5 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 rounded-lg hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all shadow-sm active:scale-95" 
+                                                                title="Generar Egreso Digital (PDF)"
+                                                            >
+                                                                <FileText size={18} />
+                                                            </button>
                                                             <button onClick={() => setViewingAssetsItem(item)} className="p-2.5 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 rounded-lg hover:bg-slate-900 dark:hover:bg-slate-950 hover:text-white transition-all shadow-sm active:scale-95" title="Listado Detallado">
                                                                 <Eye size={18} />
                                                             </button>
@@ -4467,7 +4612,29 @@ export default function App() {
                                             placeholder="Busque por código o nombre del producto..."
                                         />
                                     </div>
-                                    <div className="flex justify-end">
+                                    <div className="flex justify-end gap-3">
+                                        <button 
+                                            type="button"
+                                            onClick={() => {
+                                                setDigitalEgressOrigin('BODEGA');
+                                                if (selectedInventoryItem) {
+                                                    const found = availableInventoryList.find(i => i.pn === selectedInventoryItem);
+                                                    setDigitalEgressItems([{
+                                                        codigo: selectedInventoryItem,
+                                                        cantidad: 1,
+                                                        descripcion: found ? found.description : '',
+                                                        serial_number: ''
+                                                    }]);
+                                                } else {
+                                                    setDigitalEgressItems([]);
+                                                }
+                                                setDigitalEgressInitialClient('');
+                                                setDigitalEgressModalOpen(true);
+                                            }}
+                                            className="bg-emerald-600 text-white px-8 py-4 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-emerald-700 transition-all shadow-lg flex items-center gap-2 active:scale-95"
+                                        >
+                                            <FileText size={18}/> Egreso Digital (PDF)
+                                        </button>
                                         <button type="submit" disabled={!selectedInventoryItem} className="bg-slate-900 dark:bg-blue-600 text-white px-12 py-4 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-slate-800 disabled:opacity-30 transition-all shadow-lg flex items-center gap-3 active:scale-95">
                                             Procesar Salida <ArrowRight size={20}/>
                                         </button>
@@ -5026,6 +5193,38 @@ export default function App() {
                                     <Download size={14}/> Exportar Excel
                                 </button>
 
+                                {/* Egreso Digital */}
+                                <button 
+                                    onClick={() => {
+                                        setDigitalEgressOrigin('REPUESTOS');
+                                        if (selectedSparePartIds.size > 0) {
+                                            const selParts = spareParts.filter(p => selectedSparePartIds.has(p.id));
+                                            const firstClient = selParts.find(p => p.cliente)?.cliente || '';
+                                            setDigitalEgressInitialClient(firstClient);
+                                            setDigitalEgressItems(selParts.map(sp => ({
+                                                codigo: sp.pn || '',
+                                                cantidad: Number(sp.cantidad) || 1,
+                                                descripcion: sp.descripcion || '',
+                                                serial_number: '',
+                                                spare_part_id: sp.id
+                                            })));
+                                        } else {
+                                            setDigitalEgressInitialClient('');
+                                            setDigitalEgressItems([]);
+                                        }
+                                        setDigitalEgressModalOpen(true);
+                                    }}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white transition-all shadow-sm"
+                                    title="Generar documento oficial de Egreso Digital con firma y sello ORIMEC"
+                                >
+                                    <FileText size={14}/> Egreso Digital
+                                    {selectedSparePartIds.size > 0 && (
+                                        <span className="bg-emerald-500 text-white px-2 py-0.5 rounded-full text-[10px] font-bold">
+                                            {selectedSparePartIds.size}
+                                        </span>
+                                    )}
+                                </button>
+
                                 {/* Nuevo manual */}
                                 <button onClick={() => setShowSparePartModal(true)}
                                     className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-sm">
@@ -5250,6 +5449,23 @@ export default function App() {
                                     <table className="w-full text-xs text-left min-w-[1100px]">
                                         <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 uppercase font-black tracking-widest text-[10px] border-b border-slate-100 dark:border-slate-700 select-none">
                                             <tr>
+                                                <th className="w-10 px-3 py-3 text-center">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={paginatedSpareParts.length > 0 && paginatedSpareParts.every(sp => selectedSparePartIds.has(sp.id))}
+                                                        onChange={(e) => {
+                                                            const next = new Set(selectedSparePartIds);
+                                                            if (e.target.checked) {
+                                                                paginatedSpareParts.forEach(sp => next.add(sp.id));
+                                                            } else {
+                                                                paginatedSpareParts.forEach(sp => next.delete(sp.id));
+                                                            }
+                                                            setSelectedSparePartIds(next);
+                                                        }}
+                                                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                                        title="Seleccionar todos los de esta página"
+                                                    />
+                                                </th>
                                                 <th 
                                                     className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
                                                     onClick={() => setSparePartsSort(s => s === 'pn_az' ? 'pn_za' : 'pn_az')}
@@ -5302,10 +5518,34 @@ export default function App() {
                                         <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                                             {paginatedSpareParts.map(sp => {
                                                 const linkedAsset = sp.asset_id ? assets.find(a => a.id === sp.asset_id) : undefined;
+                                                const isSelected = selectedSparePartIds.has(sp.id);
                                                 return (
-                                                    <tr key={sp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+                                                    <tr key={sp.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group ${isSelected ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : ''}`}>
+                                                        <td className="w-10 px-3 py-3 text-center">
+                                                            <input 
+                                                                type="checkbox" 
+                                                                checked={isSelected}
+                                                                onChange={(e) => {
+                                                                    const next = new Set(selectedSparePartIds);
+                                                                    if (e.target.checked) {
+                                                                        next.add(sp.id);
+                                                                    } else {
+                                                                        next.delete(sp.id);
+                                                                    }
+                                                                    setSelectedSparePartIds(next);
+                                                                }}
+                                                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                                            />
+                                                        </td>
                                                         <td className="px-4 py-3">
-                                                            <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">{sp.pn || '—'}</span>
+                                                            <div className="flex flex-col">
+                                                                <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">{sp.pn || '—'}</span>
+                                                                {sp.fecha_egreso && (
+                                                                    <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 w-fit">
+                                                                        Egreso: {sp.fecha_egreso}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </td>
                                                         <td className="px-4 py-3 max-w-[200px]">
                                                             <span className="text-slate-700 dark:text-slate-300 line-clamp-2" title={sp.descripcion}>{sp.descripcion || '—'}</span>
@@ -5398,6 +5638,25 @@ export default function App() {
                                                         {canManageSpareParts && (
                                                             <td className="px-4 py-3 text-right whitespace-nowrap">
                                                                 <div className="flex items-center justify-end gap-1">
+                                                                    <button 
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setDigitalEgressOrigin('REPUESTOS');
+                                                                            setDigitalEgressInitialClient(sp.cliente || '');
+                                                                            setDigitalEgressItems([{
+                                                                                codigo: sp.pn || '',
+                                                                                cantidad: Number(sp.cantidad) || 1,
+                                                                                descripcion: sp.descripcion || '',
+                                                                                serial_number: '',
+                                                                                spare_part_id: sp.id
+                                                                            }]);
+                                                                            setDigitalEgressModalOpen(true);
+                                                                        }} 
+                                                                        title="Generar Egreso Digital para este repuesto"
+                                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-all"
+                                                                    >
+                                                                        <FileText size={15}/>
+                                                                    </button>
                                                                     <button 
                                                                         type="button"
                                                                         onClick={() => setEditingSparePart(sp)} 
@@ -6913,6 +7172,20 @@ export default function App() {
               </div>
           </div>
       )}
+
+      {/* Modal de Egreso Digital (Repuestos & Bodega) */}
+      <DigitalEgressModal
+        isOpen={digitalEgressModalOpen}
+        onClose={() => setDigitalEgressModalOpen(false)}
+        initialItems={digitalEgressItems}
+        initialClient={digitalEgressInitialClient}
+        initialOrigin={digitalEgressOrigin}
+        currentUserName={currentUser?.name || currentUser?.id || 'Francisco Sotomayor'}
+        nextEgressNumber={nextEgressNumber}
+        onConfirmEgress={handleConfirmDigitalEgress}
+        availableSpareParts={spareParts}
+        availableInventory={availableInventoryList}
+      />
 
     </div>
     </AppErrorBoundary>

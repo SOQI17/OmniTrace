@@ -201,3 +201,29 @@ export interface SparePart {
   created_at: string;
   source: 'CSV_IMPORT' | 'SOLICITUD' | 'MANUAL'; // Origen del registro
 }
+
+export interface DigitalEgressItem {
+  id?: string;
+  codigo: string;          // P/N del repuesto o activo
+  cantidad: number;
+  descripcion: string;
+  serial_number?: string;  // S/N opcional
+  asset_id?: string;       // Si proviene de Bodega
+  spare_part_id?: string;  // Si proviene de Repuestos
+}
+
+export interface DigitalEgressRecord {
+  id: string;
+  numero: number;             // Correlativo que inicia en 1
+  titulo: string;             // "EGRESO DIGITAL 1"
+  cliente: string;            // Código / Nombre de Hospital
+  fecha: string;              // Fecha formal (ej: "martes, 08 de septiembre de 2026")
+  fecha_iso: string;          // ISO string
+  responsable: string;        // Nombre del custodio / técnico
+  direccion: string;          // Ciudad o dirección (ej: "Quito")
+  items: DigitalEgressItem[];
+  observaciones: string;
+  origen: 'REPUESTOS' | 'BODEGA';
+  created_by: string;
+  created_at: string;
+}
