@@ -684,6 +684,8 @@ export default function App() {
   const canEditWarehouse = currentUser?.role === 'WAREHOUSE' || currentUser?.role === 'ADMIN';
   const canCreateRequest = currentUser?.role === 'REQUESTER' || currentUser?.role === 'ADMIN';
   const canViewLogistics = currentUser?.role !== 'WAREHOUSE';
+  const canCloseImport = currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
+  const canExportExcel = currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
 
   const filteredGlobalAssets = globalSearchTerm.length < 2 ? [] : assets.filter(a => 
       a.metadata.pn.toLowerCase().includes(globalSearchTerm.toLowerCase()) ||
