@@ -1036,6 +1036,9 @@ export default function App() {
 
   // (Handlers de solicitudes, logística, retornos, documentos y escáner modularizados)
 
+  if (loadingAuth) return <div className="p-10 text-slate-500 font-medium">Cargando OmniTrace...</div>;
+  if (!currentUser) return <AppErrorBoundary><LoginScreen /></AppErrorBoundary>;
+
   // --- ESTRUCTURA BASE TIPO "APP NATIVA" CON FIXED INSET-0 ---
   return (
     <AppErrorBoundary>
