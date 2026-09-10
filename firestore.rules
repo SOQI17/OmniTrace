@@ -100,6 +100,16 @@ service cloud.firestore {
       allow write: if isAuthenticated();
     }
 
+    // ─── Egresos Digitales (/egresos_digitales/{egressId}) ────────────────────
+    // • Lectura: Cualquier usuario autenticado.
+    // • Creación: ADMIN, IMPORTER o WAREHOUSE (roles que operan Bodega/Repuestos).
+    // • Modificación y eliminación: Estrictamente ADMIN (registro de auditoría).
+    match /egresos_digitales/{egressId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isImporter() || isWarehouse();
+      allow update, delete: if isAdmin();
+    }
+
     // ─── Regla por Defecto (Zero Trust) ───────────────────────────────────────
     // Cualquier otra ruta no explícitamente autorizada queda terminantemente denegada.
     match /{document=**} {
