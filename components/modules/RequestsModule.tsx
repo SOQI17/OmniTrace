@@ -155,7 +155,7 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
           provider: 'INTERNO',
           cliente_final: formData.get('solicitante') as string || '',
           equipo_destino: formData.get('equipo_destino') as string || '',
-          condicion: (AssetCondition.LOAN ?? 'PRESTAMO') as any,
+          condicion: 'PRESTAMO' as any,
           numero_orden_ge: loanOrderId,
           fecha_solicitud: new Date().toISOString(),
           pn: item.pn,

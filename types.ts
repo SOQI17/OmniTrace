@@ -227,3 +227,19 @@ export interface DigitalEgressRecord {
   created_by: string;
   created_at: string;
 }
+
+export interface RequestDraftItem {
+  id: string;
+  pn: string;
+  description: string;
+  cantidad: number;
+  cost: number;
+  costo_dia?: number;
+}
+
+export interface InventoryItem {
+  pn: string;
+  description: string;
+  totalQuantity: number;
+  locations: Record<string, number>;
+}

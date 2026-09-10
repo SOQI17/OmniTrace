@@ -4,11 +4,13 @@ import {
   AssetStatus, 
   ImportationCosts, 
   ImportItem, 
-  User 
+  User, 
+  AuditLogEntry 
 } from '../../types';
 import { db } from '../../firebase';
-import { collection, doc, writeBatch, addDoc } from 'firebase/firestore';
+import { collection, doc, writeBatch, addDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { 
+  MessageSquare,
   Layers, 
   CheckSquare, 
   RefreshCw, 
@@ -42,6 +44,7 @@ interface LogisticsModuleProps {
   canExportExcel: boolean;
   selectedAssetId: string | null;
   onSelectAsset: (id: string | null) => void;
+  logs?: AuditLogEntry[];
   onNavigateToWarehouse?: () => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
   showError: (msg: string) => void;
@@ -103,6 +106,14 @@ const LocalExpenseInput: React.FC<{
   );
 };
 
+
+const InfoField: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+  <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-700 text-xs">
+    <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">{label}</span>
+    <div className="font-bold text-slate-800 dark:text-slate-200 uppercase">{value || '-'}</div>
+  </div>
+);
+
 export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
   assets,
   assetsByOrder,
@@ -112,6 +123,7 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
   canExportExcel,
   selectedAssetId,
   onSelectAsset,
+  logs = [],
   onNavigateToWarehouse,
   showToast,
   showError,
@@ -124,6 +136,40 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
   const setWarehouseSubTab = (_tab: string) => {};
 
   const selectedAsset = useMemo(() => assets.find(a => a.id === selectedAssetId) || null, [assets, selectedAssetId]);
+
+  
+  // Comments por orden
+  const [comments, setComments] = useState<Record<string, {id:string; text:string; user:string; ts:string}[]>>({});
+  const [newComment, setNewComment] = useState('');
+  const [showComments, setShowComments] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsub = onSnapshot(collection(db, "order_comments"), (snap) => {
+      const data: Record<string, any[]> = {};
+      snap.docs.forEach(d => { data[d.id] = d.data().comments || []; });
+      setComments(data);
+    }, () => {});
+    return () => unsub();
+  }, [currentUser]);
+
+  const handleAddComment = async () => {
+    if (!newComment.trim() || !selectedAsset || !currentUser) return;
+    try {
+      const orderId = selectedAsset.metadata.numero_orden_ge || selectedAsset.id;
+      const existing = comments[orderId] || [];
+      const updated = [...existing, {
+        id: generateUUID(),
+        text: newComment.trim(),
+        user: currentUser.name || currentUser.id,
+        ts: new Date().toISOString()
+      }];
+      await setDoc(doc(db, "order_comments", orderId), { comments: updated });
+      setNewComment('');
+    } catch (e: any) {
+      showError(e.message);
+    }
+  };
 
   const [logisticsSubTab, setLogisticsSubTab] = useState<'INITIAL' | 'FINAL'>('INITIAL');
   const [logisticsFilter, setLogisticsFilter] = useState<{ status: string; condicion: string; proveedor: string }>({ status: '', condicion: '', proveedor: '' });
@@ -1389,140 +1435,7 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
           </div>
       )}
 
-      {showDispatchModal && selectedInventoryItem && (
-          <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-0 md:p-6 backdrop-blur-md">
-              <div role="dialog" aria-modal="true" aria-label="Tarjeta de Egreso" className="bg-white dark:bg-slate-800 w-full h-full md:h-auto md:max-w-xl md:rounded-[40px] shadow-2xl overflow-hidden animate-fadeIn flex flex-col">
-                  {/* ... dispatch modal content ... */}
-                  <div className="p-8 md:p-10 flex-1 overflow-y-auto">
-                      <div className="flex justify-between items-start mb-10">
-                          <div className="flex items-center gap-4">
-                              <div className="bg-slate-900 p-3 rounded-2xl shadow-xl text-white"><ScanLine size={32} /></div>
-                              <div>
-                                  <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100 uppercase tracking-tighter leading-none">Tarjeta de Egreso</h3>
-                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2">Disponibilidad Actual: <span className="text-blue-600 dark:text-blue-400">{inventoryStats[selectedInventoryItem].stock} UNI</span></p>
-                              </div>
-                          </div>
-          <button onClick={() => setShowDispatchModal(false)} aria-label="Cerrar modal" className="text-slate-300 hover:text-red-500 transition-colors bg-slate-50 dark:bg-slate-700 p-2 rounded-xl"><X size={28}/></button>
-                      </div>
-
-                      <div className="bg-slate-100 dark:bg-slate-700 rounded-xl p-1.5 flex mb-10">
-                          <div className="flex-1 text-center py-3 text-[10px] uppercase font-black text-slate-400 tracking-widest">Auditoría IN</div>
-                          <div className="flex-1 text-center py-3 text-[10px] uppercase font-black text-slate-900 dark:text-white bg-white dark:bg-slate-800 shadow-sm rounded-lg tracking-widest">Validación OUT</div>
-                      </div>
-
-                      <div className="space-y-8">
-                          <div className="grid grid-cols-2 gap-6">
-                              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Cantidad</label><input type="number" min="1" max={inventoryStats[selectedInventoryItem].stock} value={dispatchData.quantity} onChange={(e) => setDispatchData({...dispatchData, quantity: parseInt(e.target.value) || 0})} className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 text-xl font-black text-slate-800 dark:text-white focus:ring-2 focus:ring-slate-900 transition-all text-center"/></div>
-                              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Motivo Legal</label><input list="dispatch-reasons" type="text" value={dispatchData.reason} onChange={(e) => setDispatchData({...dispatchData, reason: e.target.value})} className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 text-sm font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-slate-900 transition-all" placeholder="Seleccione..."/></div>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Destino Final</label><input type="text" value={dispatchData.destination} onChange={(e) => setDispatchData({...dispatchData, destination: e.target.value})} placeholder="Ej. Hospital Central" className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 text-sm font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-slate-900 transition-all"/></div>
-                              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Custodio / Responsable</label><input type="text" value={dispatchData.employee} onChange={(e) => setDispatchData({...dispatchData, employee: e.target.value})} placeholder="Ej. Nombre del Técnico" className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 text-sm font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-slate-900 transition-all"/></div>
-                          </div>
-                      </div>
-                      <datalist id="dispatch-reasons">
-                          <option value="Venta" /><option value="Consignación" /><option value="Garantía" /><option value="Demo" />
-                      </datalist>
-                  </div>
-                  
-                  <div className="p-8 md:p-10 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-700">
-                      <button onClick={handleExecuteDispatch} className="w-full bg-slate-900 dark:bg-blue-600 text-white py-5 rounded-[24px] font-black uppercase text-xs tracking-[0.2em] hover:bg-slate-800 transition-all active:scale-[0.98] shadow-2xl flex items-center justify-center gap-4">
-                          Confirmar Salida <ArrowRight size={20} />
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {showAddProductModal && (
-          <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-0 md:p-6 backdrop-blur-md">
-              <div role="dialog" aria-modal="true" aria-label="Ajuste Manual de Stock" className="bg-white dark:bg-slate-800 w-full h-full md:h-auto md:max-w-xl md:rounded-[40px] shadow-2xl overflow-hidden animate-fadeIn flex flex-col">
-                  {/* ... Add Product Modal ... */}
-                  <div className="flex justify-between items-center p-8 border-b bg-slate-50 dark:bg-slate-900 dark:border-slate-700">
-                      <h3 className="text-xl font-black text-slate-800 dark:text-slate-100 uppercase tracking-tighter flex items-center gap-3"><Plus size={24} className="text-blue-600"/> Ajuste Manual de Stock</h3>
-                      <button onClick={() => setShowAddProductModal(false)} aria-label="Cerrar modal" className="text-slate-300 hover:text-red-500 transition-colors"><X size={28}/></button>
-                  </div>
-                  <form onSubmit={handleCreateNewProduct} className="p-8 md:p-10 space-y-6 flex-1">
-                      <div className="grid grid-cols-2 gap-6">
-                          <div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">P/N (SKU)</label><input name="pn" type="text" required className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 font-black uppercase text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 transition-all"/></div>
-                          <div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Cantidad</label><input name="stock" type="number" defaultValue="1" min="1" className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 font-black text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 transition-all text-center"/></div>
-                      </div>
-                      <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Descripción Técnica</label><input name="description" type="text" required className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 transition-all"/></div>
-                      <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Costo Unitario ($)</label><input name="cost" type="number" step="0.01" className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 font-black text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 transition-all text-right"/></div>
-                      <button type="submit" className="w-full bg-slate-900 dark:bg-blue-600 text-white py-5 rounded-[24px] font-black uppercase text-xs tracking-[0.2em] hover:bg-slate-800 transition-all mt-6 shadow-xl">
-                          Registrar Activo
-                      </button>
-                  </form>
-              </div>
-          </div>
-      )}
-
-      {editingItem && (
-          <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-0 md:p-6 backdrop-blur-md">
-              <div className="bg-white dark:bg-slate-800 w-full h-full md:h-auto md:max-w-xl md:rounded-[40px] shadow-2xl overflow-hidden animate-fadeIn flex flex-col">
-                  {/* ... Edit Product Modal ... */}
-                  <div className="flex justify-between items-center p-8 border-b bg-slate-50 dark:bg-slate-900 dark:border-slate-700">
-                      <h3 className="text-xl font-black text-slate-800 dark:text-slate-100 uppercase tracking-tighter flex items-center gap-3"><Edit3 size={24} className="text-slate-900 dark:text-slate-100"/> Ficha Técnica: {editingItem.pn}</h3>
-                      <button onClick={() => setEditingItem(null)} aria-label="Cerrar modal" className="text-slate-300 hover:text-red-500 transition-colors"><X size={28}/></button>
-                  </div>
-                  <form onSubmit={handleEditProduct} className="p-8 md:p-10 space-y-8 flex-1">
-                      <div className="p-4 bg-amber-50 dark:bg-amber-900/20 text-amber-900 dark:text-amber-300 text-[10px] font-black uppercase rounded-lg border border-amber-200 dark:border-amber-800 leading-normal tracking-wider shadow-sm">Este cambio es masivo y afectará a todos los activos vinculados a este Part Number.</div>
-                      <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Especificación</label><input name="description" type="text" defaultValue={editingItem.description} required className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 font-bold text-slate-800 dark:text-white focus:ring-2 focus:ring-slate-400 transition-all"/></div>
-                      <div className="grid grid-cols-2 gap-6">
-                          <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Costo USD</label><input name="cost" type="number" step="0.01" defaultValue={editingItem.cost} className="w-full border-none bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 font-black text-slate-800 dark:text-white focus:ring-2 focus:ring-slate-400 transition-all text-right"/></div>
-                          <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Balance Stock</label><input name="stock" type="number" min="0" defaultValue={editingItem.stock} className="w-full border-none bg-slate-100 dark:bg-slate-800 rounded-2xl p-4 font-black text-slate-800 dark:text-white focus:ring-2 focus:ring-slate-400 transition-all text-center"/></div>
-                      </div>
-                      <div className="flex justify-end gap-4 mt-10 border-t dark:border-slate-700 pt-8">
-                          <button type="button" onClick={()=>setEditingItem(null)} className="px-10 py-4 bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-300 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-slate-200 dark:hover:bg-slate-600 transition-all flex-1">Anular</button>
-                          <button type="submit" className="px-10 py-4 bg-slate-900 dark:bg-blue-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-slate-800 transition-all flex-1">Confirmar</button>
-                      </div>
-                  </form>
-              </div>
-          </div>
-      )}
-
-      {viewingAssetsItem && (
-          <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-0 md:p-6 backdrop-blur-md">
-              <div role="dialog" aria-modal="true" aria-label={`Audit Trail: ${viewingAssetsItem.pn}`} className="bg-white dark:bg-slate-800 w-full h-full md:h-auto md:max-w-3xl md:rounded-[40px] overflow-hidden animate-fadeIn flex flex-col md:max-h-[85vh] shadow-2xl">
-                  {/* ... Viewing Assets Modal ... */}
-                  <div className="flex justify-between items-center p-8 border-b bg-slate-50 dark:bg-slate-900 dark:border-slate-700">
-                      <div>
-                          <h3 className="text-2xl font-black text-slate-900 dark:text-slate-100 uppercase tracking-tighter flex items-center gap-3"><QrCode size={28} className="text-blue-600"/> Audit Trail: {viewingAssetsItem.pn}</h3>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-none">{viewingAssetsItem.description}</p>
-                      </div>
-                      <button onClick={() => setViewingAssetsItem(null)} aria-label="Cerrar visor" className="text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-100 dark:border-slate-700"><X size={28}/></button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-4 md:p-8">
-                      {viewingAssetsItem.assets.length === 0 ? (
-                          <div className="text-center text-slate-300 py-20 font-black uppercase text-xs tracking-widest italic">Sin unidades físicas vinculadas</div>
-                      ) : (
-                          <div className="grid grid-cols-1 gap-4">
-                              <table className="w-full text-xs text-left">
-                                  <thead className="bg-slate-100 dark:bg-slate-900 text-slate-400 font-black uppercase tracking-widest sticky top-0 z-10">
-                                      <tr><th className="p-4">Serial Interno</th><th className="p-4">Estado</th><th className="p-4">Origen (OC)</th><th className="p-4 text-center">Etiqueta</th></tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                                      {viewingAssetsItem.assets.map(asset => (
-                                          <tr key={asset.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                                              <td className="p-4 font-black text-slate-800 dark:text-slate-200 font-mono tracking-tighter">{asset.metadata.serial_ge}</td>
-                                              <td className="p-4"><StatusBadge status={asset.current_status}/></td>
-                                              <td className="p-4 font-bold text-slate-400 uppercase text-[10px]">{asset.metadata.numero_orden_ge}</td>
-                                              <td className="p-4 text-center"><div className="scale-75 origin-center"><AssetLabelPDF asset={asset} /></div></td>
-                                          </tr>
-                                      ))}
-                                  </tbody>
-                              </table>
-                          </div>
-                      )}
-                  </div>
-                  <div className="p-8 border-t bg-slate-50 dark:bg-slate-900 dark:border-slate-700 flex justify-end">
-                      <button onClick={()=>setViewingAssetsItem(null)} className="w-full md:w-auto px-12 py-4 bg-slate-900 dark:bg-blue-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-slate-800 transition-all active:scale-95 shadow-xl">Cerrar Visor</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-            {showConsolidationModal && (
+      {showConsolidationModal && (
           <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
               {/* Modal Redimensionable */}
               <div role="dialog" aria-modal="true" aria-label="Selección de Ítems para Consolidación" className="bg-white dark:bg-slate-800 w-full max-w-2xl rounded-[32px] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col min-w-[400px] min-h-[500px] max-h-[90vh] resize both overflow-hidden relative">

@@ -760,6 +760,7 @@ export default function App() {
   const [digitalEgressOrigin, setDigitalEgressOrigin] = useState<'REPUESTOS' | 'BODEGA'>('REPUESTOS');
   const [digitalEgresses, setDigitalEgresses] = useState<DigitalEgressRecord[]>([]);
   const [selectedSparePartIds, setSelectedSparePartIds] = useState<Set<string>>(new Set());
+  const [logoError, setLogoError] = useState(false);
 
 // (State modularizado en módulos independientes)
 
@@ -1336,6 +1337,7 @@ export default function App() {
                   canExportExcel={canExportExcel}
                   selectedAssetId={selectedAssetId}
                   onSelectAsset={setSelectedAssetId}
+                  logs={logs}
                   onNavigateToWarehouse={() => {
                     setActiveTab('WAREHOUSE');
                     setWarehouseSubTab('ENTRY');
