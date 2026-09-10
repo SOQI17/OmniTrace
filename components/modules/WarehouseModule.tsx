@@ -510,6 +510,7 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
                   <tr>
                     <th className="p-5">sku / part number</th>
                     <th className="p-5">especificación técnica</th>
+                    <th className="p-5">cliente</th>
                     <th className="p-5">condición</th>
                     <th className="p-5 text-right">costo prom.</th>
                     <th className="p-5 text-center">stock real</th>
@@ -519,6 +520,11 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                   {inventoryList.map(item => {
                     const condiciones = [...new Set(item.assets.map(a => a.metadata.condicion).filter(Boolean))];
+                    const clientes = [...new Set(
+                      item.assets
+                        .map(a => a.metadata?.cliente_final?.trim())
+                        .filter(c => c && c.toUpperCase() !== 'STOCK')
+                    )];
                     const condColor = (c: string) => {
                       const l = c.toLowerCase();
                       if (l.includes('warranty') || l.includes('garantia') || l.includes('garantía'))
@@ -537,6 +543,18 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
                         <td className="p-5">
                           <div className="font-bold text-slate-600 dark:text-slate-300">{item.description}</div>
                           <div className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-100 dark:bg-slate-700 inline-block px-2 py-0.5 rounded-md mt-1.5">{item.category}</div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex flex-wrap gap-1.5">
+                            {clientes.length === 0
+                              ? <span className="text-slate-300 italic text-[10px]">-</span>
+                              : clientes.map(c => (
+                                <span key={c} className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wide border bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600">
+                                  {c}
+                                </span>
+                              ))
+                            }
+                          </div>
                         </td>
                         <td className="p-5">
                           <div className="flex flex-wrap gap-1.5">
