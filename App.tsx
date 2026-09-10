@@ -257,11 +257,13 @@ function sanitizeRow<T extends Record<string, any>>(row: T): T {
 }
 
 // ─── Normalización Inteligente de Condiciones de Repuestos ───────────────────
-// Agrupa variaciones de texto en 4 categorías estándar:
+// Agrupa variaciones de texto en categorías estándar:
 // 1. CONTRATO DE SERVICIOS (si contiene 'contrato', 'service contract', 'cs')
 // 2. GARANTÍAS (si contiene 'garantía', 'garantia', 'warranty', 'wty')
 // 3. DOA (si contiene 'doa', 'foa', 'foi')
-// 4. VENTAS (si contiene 'venta', 'compra', 'purchase', o si solo contiene valor numérico de precio)
+// 4. WRONG SHIPMENT (si contiene 'wrong shipment', 'wrong shippment')
+// 5. CONCESIÓN COMERCIAL (si contiene 'concesion comercial', 'conseción comercial', 'concesión', 'concession')
+// 6. VENTAS (si contiene 'venta', 'compra', 'purchase', 'with payment', 'payment', o si solo contiene valor numérico de precio)
 function normalizeSparePartCondition(cond: string | undefined | null, precio?: number): string {
   const str = (cond || '').trim();
   const lower = str.toLowerCase();
@@ -281,12 +283,22 @@ function normalizeSparePartCondition(cond: string | undefined | null, precio?: n
     return 'DOA';
   }
 
-  // 4. Ventas / Compra
-  if (/ventas?|compras?|purchase|sales?/i.test(lower)) {
+  // 4. Wrong shipment (wrong shipment, wrong shippment)
+  if (/wrong\s*ship+ment/i.test(lower)) {
+    return 'WRONG SHIPMENT';
+  }
+
+  // 5. Concesión comercial (concesion comercial, conseción comercial, concession)
+  if (/con[sc]e[cs]i[oó]n|concession/i.test(lower)) {
+    return 'CONCESIÓN COMERCIAL';
+  }
+
+  // 6. Ventas / Compra / With payment / Payment
+  if (/ventas?|compras?|purchase|sales?|with\s*payment|payment/i.test(lower)) {
     return 'VENTAS';
   }
 
-  // 5. Si el texto de la condición es puramente un precio (ej: "5233.06", "13887,20$", "$450") o si tiene precio mayor a 0
+  // 7. Si el texto de la condición es puramente un precio (ej: "5233.06", "13887,20$", "$450") o si tiene precio mayor a 0
   const isOnlyPriceString = /^[\$€£]?\s*\d+(?:[.,]\d{1,2})?\s*(?:usd|\$)?$/i.test(str.replace(/\s+/g, ''));
   if (isOnlyPriceString) {
     return 'VENTAS';
@@ -4692,8 +4704,8 @@ export default function App() {
                     }
 
                     const confirmed = await showConfirm(
-                        `¿Deseas agrupar y actualizar ${needsUpdate.length} repuestos a las 4 categorías estándar?\n\n` +
-                        `• CONTRATO DE SERVICIOS\n• GARANTÍAS\n• DOA\n• VENTAS\n\n` +
+                        `¿Deseas agrupar y actualizar ${needsUpdate.length} repuestos a las categorías estándar?\n\n` +
+                        `• CONTRATO DE SERVICIOS\n• GARANTÍAS\n• DOA\n• WRONG SHIPMENT\n• CONCESIÓN COMERCIAL\n• VENTAS\n\n` +
                         `Esta acción actualizará los registros directamente en la base de datos.`
                     );
                     if (!confirmed) return;
@@ -5307,6 +5319,10 @@ export default function App() {
                                                                             ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
                                                                             : condNorm === 'DOA'
                                                                             ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 border border-red-200 dark:border-red-800'
+                                                                            : condNorm === 'WRONG SHIPMENT'
+                                                                            ? 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border border-orange-200 dark:border-orange-800'
+                                                                            : condNorm === 'CONCESIÓN COMERCIAL'
+                                                                            ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
                                                                             : condNorm === 'VENTAS'
                                                                             ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                                                                             : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
@@ -5945,6 +5961,8 @@ export default function App() {
                                                 <option value="CONTRATO DE SERVICIOS">Contrato de Servicios</option>
                                                 <option value="GARANTÍAS">Garantías</option>
                                                 <option value="DOA">DOA (o FOA)</option>
+                                                <option value="WRONG SHIPMENT">Wrong Shipment</option>
+                                                <option value="CONCESIÓN COMERCIAL">Concesión Comercial</option>
                                                 <option value="VENTAS">Ventas</option>
                                             </select>
                                         </div>
