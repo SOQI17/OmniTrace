@@ -608,7 +608,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'REQUEST' | 'LOGISTICS' | 'WAREHOUSE' | 'SCANNER' | 'DOCS' | 'RETURNS' | 'ADMIN' | 'SPAREPARTS'>('DASHBOARD');
   const [requestMode, setRequestMode] = useState<'MENU' | 'PARTS' | 'EQUIPMENT' | 'TOOLS'>('MENU');
   const [logisticsSubTab, setLogisticsSubTab] = useState<'INITIAL' | 'FINAL' | 'HISTORY'>('INITIAL');
-  const [warehouseSubTab, setWarehouseSubTab] = useState<'ENTRY' | 'MOVEMENTS' | 'INVENTORY' | 'REPORTS'>('INVENTORY');
+  const [warehouseSubTab, setWarehouseSubTab] = useState<'ENTRY' | 'MOVEMENTS' | 'INVENTORY'>('INVENTORY');
   
   const [selectedInventoryItem, setSelectedInventoryItem] = useState<string | null>(null);
   const [inventorySearch, setInventorySearch] = useState('');
@@ -1265,6 +1265,7 @@ export default function App() {
               <WarehouseModule
                 assets={assets}
                 initialInventorySearch={warehouseSearchQuery}
+                initialSubTab={warehouseSubTab}
                 logs={logs}
                 currentUser={currentUser}
                 canEditWarehouse={canEditWarehouse}

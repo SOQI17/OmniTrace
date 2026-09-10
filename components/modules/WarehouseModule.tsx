@@ -139,6 +139,7 @@ const SearchableSelect = ({ options, value, onChange, placeholder }: {
 export interface WarehouseModuleProps {
   assets: Asset[];
   initialInventorySearch?: string;
+  initialSubTab?: 'ENTRY' | 'INVENTORY' | 'MOVEMENTS';
   logs: AuditLogEntry[];
   currentUser: User | null;
   canEditWarehouse: boolean;
@@ -151,6 +152,7 @@ export interface WarehouseModuleProps {
 export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
   assets,
   initialInventorySearch,
+  initialSubTab,
   logs,
   currentUser,
   canEditWarehouse,
@@ -159,7 +161,7 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
   showConfirm,
   onOpenDigitalEgress
 }) => {
-  const [warehouseSubTab, setWarehouseSubTab] = useState<'ENTRY' | 'INVENTORY' | 'MOVEMENTS'>('INVENTORY');
+  const [warehouseSubTab, setWarehouseSubTab] = useState<'ENTRY' | 'INVENTORY' | 'MOVEMENTS'>(initialSubTab || 'INVENTORY');
   const [receivingAsset, setReceivingAsset] = useState<Asset | null>(null);
   const [viewingAssetsItem, setViewingAssetsItem] = useState<InventoryItem | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
@@ -176,6 +178,10 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
       setWarehouseSubTab('INVENTORY');
     }
   }, [initialInventorySearch]);
+
+  useEffect(() => {
+    if (initialSubTab) setWarehouseSubTab(initialSubTab);
+  }, [initialSubTab]);
 
   // Computes inventory aggregated by P/N
   const inventoryStats = useMemo(() => {
