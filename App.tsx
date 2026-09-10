@@ -293,12 +293,15 @@ function normalizeSparePartCondition(cond: string | undefined | null, precio?: n
     return 'CONCESIÓN COMERCIAL';
   }
 
-  // 6. Ventas / Compra / With payment / Payment
-  if (/ventas?|compras?|purchase|sales?|with\s*payment|payment/i.test(lower)) {
+  // 6. Ventas / Compra / With payment / Payment / Símbolo de dólar ($) o USD
+  if (/ventas?|compras?|purchase|sales?|with\s*payment|payment|\$|\busd\b/i.test(lower)) {
     return 'VENTAS';
   }
 
-  // 7. Si el texto de la condición es puramente un precio (ej: "5233.06", "13887,20$", "$450") o si tiene precio mayor a 0
+  // 7. Si el texto de la condición contiene $ o es puramente un precio (ej: "$", "5233.06", "13887,20$", "$450")
+  if (str.includes('$')) {
+    return 'VENTAS';
+  }
   const isOnlyPriceString = /^[\$€£]?\s*\d+(?:[.,]\d{1,2})?\s*(?:usd|\$)?$/i.test(str.replace(/\s+/g, ''));
   if (isOnlyPriceString) {
     return 'VENTAS';
@@ -4614,20 +4617,33 @@ export default function App() {
                         const batch = writeBatch(db);
                         rows.forEach(row => {
                             const id = generateUUID();
-                            const rawObs = String(row['OBSERVACION'] || row['Observacion'] || '').trim();
+                            const rawCond = String(row['CONDICION'] || row['Condicion'] || row['CONDICIÓN'] || row['Condición'] || row['OBSERVACION'] || row['Observacion'] || '').trim();
+                            const rawPrecioCol = String(row['PRECIO'] || row['Precio'] || row['VALOR'] || row['Valor'] || '').trim();
                             
-                            // Extraer precio si viene dentro de observación o condición (ej: "COMPRA 5233.06", "13887,20$", "CS 421.4", "544,74 GARANTÍA")
+                            // Extraer precio si viene en columna dedicada o dentro de la condición (ej: "$5233.06", "13887,20$", "$ 450", "421.4")
                             let extractedPrice: number | undefined = undefined;
-                            const priceMatch = rawObs.match(/(\d+(?:[.,]\d{1,2})?)\s*(?:\$|USD)?/);
-                            if (priceMatch) {
-                                const numCandidate = parseFloat(priceMatch[1].replace(',', '.'));
-                                if (!isNaN(numCandidate) && numCandidate > 0) {
-                                    extractedPrice = numCandidate;
+                            if (rawPrecioCol) {
+                                const numDirect = parseFloat(rawPrecioCol.replace(/[^\d.,]/g, '').replace(',', '.'));
+                                if (!isNaN(numDirect) && numDirect > 0) extractedPrice = numDirect;
+                            }
+                            if (extractedPrice === undefined && (rawCond.includes('$') || /\d/.test(rawCond))) {
+                                const priceMatch = rawCond.match(/(?:[\$€£]|USD)?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})|\d+(?:[.,]\d{1,2})?)\s*(?:[\$€£]|USD)?/i);
+                                if (priceMatch) {
+                                    let cleanNumStr = priceMatch[1];
+                                    if (cleanNumStr.includes('.') && cleanNumStr.includes(',')) {
+                                        cleanNumStr = cleanNumStr.replace(/\./g, '').replace(',', '.');
+                                    } else if (cleanNumStr.includes(',')) {
+                                        cleanNumStr = cleanNumStr.replace(',', '.');
+                                    }
+                                    const numCandidate = parseFloat(cleanNumStr);
+                                    if (!isNaN(numCandidate) && numCandidate > 0) {
+                                        extractedPrice = numCandidate;
+                                    }
                                 }
                             }
 
-                            // Normalizar condición agrupando en: Contrato de Servicios, Garantías, DOA, Ventas
-                            const cleanCondition = normalizeSparePartCondition(rawObs, extractedPrice);
+                            // Normalizar condición agrupando en: Contrato de Servicios, Garantías, DOA, Wrong Shipment, Concesión Comercial, Ventas
+                            const cleanCondition = normalizeSparePartCondition(rawCond, extractedPrice);
 
                             const sp: any = {
                                 pn:          String(row['P/N'] || row['PN'] || row['pn'] || '').trim(),
@@ -4639,7 +4655,7 @@ export default function App() {
                                 workflow_id: String(row['WF'] || row['Wf'] || '').trim(),
                                 orden_ge:    String(row['ORDEN'] || row['Orden'] || '').trim(),
                                 condicion:   cleanCondition,
-                                observacion: rawObs,
+                                observacion: rawCond,
                                 mes:         String(row['MES'] || row['Mes'] || '').trim(),
                                 anio:        Number(row['Año'] || row['AÑO'] || row['anio'] || new Date().getFullYear()),
                                 fecha_pedido:            formatDate(row['Fecha pedido'] || row['FECHA PEDIDO']),
