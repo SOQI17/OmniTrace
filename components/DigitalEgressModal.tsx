@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   FileText, Download, Save, X, Plus, Trash2, Building2
 } from 'lucide-react';
@@ -45,10 +45,10 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
   };
 
   const [numero, setNumero] = useState<number>(nextEgressNumber || 1);
-  const [cliente, setCliente] = useState<string>(initialClient || 'Hospital de la Policía');
+  const [cliente, setCliente] = useState<string>(initialClient || '');
   const [fecha, setFecha] = useState<string>(getInitialDate());
-  const [responsable, setResponsable] = useState<string>(currentUserName || 'Francisco Sotomayor');
-  const [direccion, setDireccion] = useState<string>('Quito');
+  const [responsable, setResponsable] = useState<string>(currentUserName || '');
+  const [direccion, setDireccion] = useState<string>('');
   const [observaciones, setObservaciones] = useState<string>('');
   const [items, setItems] = useState<DigitalEgressItem[]>([]);
   const [saving, setSaving] = useState<boolean>(false);
@@ -58,10 +58,10 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setNumero(nextEgressNumber || 1);
-      setCliente(initialClient || 'Hospital de la Policía');
+      setCliente(initialClient || '');
       setFecha(getInitialDate());
-      setResponsable(currentUserName || 'Francisco Sotomayor');
-      setDireccion('Quito');
+      setResponsable(currentUserName || '');
+      setDireccion('');
       setObservaciones('');
       setItems(
         initialItems.length > 0
@@ -110,16 +110,20 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
     if (initialOrigin === 'REPUESTOS') {
       const found = availableSpareParts.find(sp => sp.pn === pn);
       if (found) {
+        if (!cliente && found.cliente && found.cliente.trim() !== '' && found.cliente.trim().toUpperCase() !== 'STOCK') {
+          setCliente(found.cliente.trim());
+        }
         setItems(prev => [
           ...prev.filter(it => it.codigo.trim() !== ''),
           {
             codigo: found.pn,
-            cantidad: 1,
+            cantidad: Number(found.cantidad) || 1,
             descripcion: found.descripcion || '',
             serial_number: '',
             spare_part_id: found.id
           }
         ]);
+        setSelectedAddPartPn('');
       }
     } else {
       const found = availableInventory.find(inv => inv.pn === pn);
@@ -133,9 +137,9 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
             serial_number: ''
           }
         ]);
+        setSelectedAddPartPn('');
       }
     }
-    setSelectedAddPartPn('');
   };
 
   const handleSaveAndConfirm = async () => {

@@ -3357,6 +3357,7 @@ export default function App() {
         <th className="p-4">Cliente Final</th>
         {/* La casilla se queda aquí, al final */}
         <th className="p-4 text-center">SEL</th> 
+        <th className="p-4 text-center">Egreso</th>
         <th className="p-4 w-10"></th>
     </tr>
 </thead>
@@ -3435,6 +3436,30 @@ export default function App() {
                     </div>
                 </td>
 
+                <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setDigitalEgressOrigin('REPUESTOS');
+                            const reqClient = mainAsset.metadata.cliente_final && mainAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK'
+                                ? mainAsset.metadata.cliente_final.trim()
+                                : '';
+                            setDigitalEgressInitialClient(reqClient);
+                            setDigitalEgressItems(group.map(a => ({
+                                codigo: a.metadata.pn,
+                                cantidad: Number(a.metadata.cantidad) || 1,
+                                descripcion: a.metadata.description,
+                                serial_number: a.metadata.serial_ge && a.metadata.serial_ge !== 'PENDIENTE' ? a.metadata.serial_ge : ''
+                            })));
+                            setDigitalEgressModalOpen(true);
+                        }}
+                        title="Generar Egreso Digital para esta Solicitud"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
+                    >
+                        <FileText size={16}/>
+                    </button>
+                </td>
+
                 <td className="p-4 text-center text-slate-300 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
                     <ChevronRight size={18}/>
                 </td>
@@ -3480,18 +3505,40 @@ export default function App() {
                                     <div className="text-left md:text-right flex flex-col items-start md:items-end gap-2">
                                         <div className="mb-2"><StatusBadge status={selectedAsset.current_status} /></div>
                                         <div className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-tighter">Creado: {new Date(selectedAsset.metadata.fecha_solicitud).toLocaleDateString()}</div>
-                                        <button
-                                            onClick={() => setShowComments(v => !v)}
-                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${showComments ? 'bg-blue-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
-                                        >
-                                            <MessageSquare size={14}/>
-                                            Notas
-                                            {(comments[selectedAsset.metadata.numero_orden_ge] || []).length > 0 && (
-                                                <span className="bg-blue-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">
-                                                    {(comments[selectedAsset.metadata.numero_orden_ge] || []).length}
-                                                </span>
-                                            )}
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => {
+                                                    setDigitalEgressOrigin('REPUESTOS');
+                                                    const reqClient = selectedAsset.metadata.cliente_final && selectedAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK' 
+                                                        ? selectedAsset.metadata.cliente_final.trim() 
+                                                        : '';
+                                                    setDigitalEgressInitialClient(reqClient);
+                                                    setDigitalEgressItems([{
+                                                        codigo: selectedAsset.metadata.pn,
+                                                        cantidad: Number(selectedAsset.metadata.cantidad) || 1,
+                                                        descripcion: selectedAsset.metadata.description,
+                                                        serial_number: selectedAsset.metadata.serial_ge && selectedAsset.metadata.serial_ge !== 'PENDIENTE' ? selectedAsset.metadata.serial_ge : ''
+                                                    }]);
+                                                    setDigitalEgressModalOpen(true);
+                                                }}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-sm"
+                                                title="Generar Egreso Digital para esta solicitud"
+                                            >
+                                                <FileText size={13}/> Egreso Digital
+                                            </button>
+                                            <button
+                                                onClick={() => setShowComments(v => !v)}
+                                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${showComments ? 'bg-blue-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
+                                            >
+                                                <MessageSquare size={14}/>
+                                                Notas
+                                                {(comments[selectedAsset.metadata.numero_orden_ge] || []).length > 0 && (
+                                                    <span className="bg-blue-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">
+                                                        {(comments[selectedAsset.metadata.numero_orden_ge] || []).length}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -4561,7 +4608,12 @@ export default function App() {
                                                             <button 
                                                                 onClick={() => {
                                                                     setDigitalEgressOrigin('BODEGA');
-                                                                    setDigitalEgressInitialClient('');
+                                                                    const reqAsset = item.assets?.find(a => {
+                                                                        const c = a.metadata?.cliente_final?.trim();
+                                                                        return c && c.toUpperCase() !== 'STOCK';
+                                                                    });
+                                                                    const destClient = reqAsset ? reqAsset.metadata.cliente_final.trim() : (item.assets?.find(a => a.warehouse?.destino_final)?.warehouse?.destino_final || '');
+                                                                    setDigitalEgressInitialClient(destClient);
                                                                     setDigitalEgressItems([{
                                                                         codigo: item.pn,
                                                                         cantidad: 1,
@@ -4619,6 +4671,12 @@ export default function App() {
                                                 setDigitalEgressOrigin('BODEGA');
                                                 if (selectedInventoryItem) {
                                                     const found = availableInventoryList.find(i => i.pn === selectedInventoryItem);
+                                                    const reqAsset = found?.assets?.find(a => {
+                                                        const c = a.metadata?.cliente_final?.trim();
+                                                        return c && c.toUpperCase() !== 'STOCK';
+                                                    });
+                                                    const destClient = reqAsset ? reqAsset.metadata.cliente_final.trim() : (found?.assets?.find(a => a.warehouse?.destino_final)?.warehouse?.destino_final || '');
+                                                    setDigitalEgressInitialClient(destClient);
                                                     setDigitalEgressItems([{
                                                         codigo: selectedInventoryItem,
                                                         cantidad: 1,
@@ -4626,9 +4684,9 @@ export default function App() {
                                                         serial_number: ''
                                                     }]);
                                                 } else {
+                                                    setDigitalEgressInitialClient('');
                                                     setDigitalEgressItems([]);
                                                 }
-                                                setDigitalEgressInitialClient('');
                                                 setDigitalEgressModalOpen(true);
                                             }}
                                             className="bg-emerald-600 text-white px-8 py-4 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-emerald-700 transition-all shadow-lg flex items-center gap-2 active:scale-95"
@@ -5199,7 +5257,12 @@ export default function App() {
                                         setDigitalEgressOrigin('REPUESTOS');
                                         if (selectedSparePartIds.size > 0) {
                                             const selParts = spareParts.filter(p => selectedSparePartIds.has(p.id));
-                                            const firstClient = selParts.find(p => p.cliente)?.cliente || '';
+                                            const firstClient = selParts.map(p => {
+                                                if (p.cliente && p.cliente.trim() !== '' && p.cliente.trim().toUpperCase() !== 'STOCK') return p.cliente.trim();
+                                                const a = p.asset_id ? assets.find(x => x.id === p.asset_id) : undefined;
+                                                if (a?.metadata?.cliente_final && a.metadata.cliente_final.trim().toUpperCase() !== 'STOCK') return a.metadata.cliente_final.trim();
+                                                return '';
+                                            }).find(c => Boolean(c)) || '';
                                             setDigitalEgressInitialClient(firstClient);
                                             setDigitalEgressItems(selParts.map(sp => ({
                                                 codigo: sp.pn || '',
@@ -5642,7 +5705,16 @@ export default function App() {
                                                                         type="button"
                                                                         onClick={() => {
                                                                             setDigitalEgressOrigin('REPUESTOS');
-                                                                            setDigitalEgressInitialClient(sp.cliente || '');
+                                                                            const reqClient = (() => {
+                                                                                if (sp.cliente && sp.cliente.trim() !== '' && sp.cliente.trim().toUpperCase() !== 'STOCK') {
+                                                                                    return sp.cliente.trim();
+                                                                                }
+                                                                                if (linkedAsset?.metadata?.cliente_final && linkedAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK') {
+                                                                                    return linkedAsset.metadata.cliente_final.trim();
+                                                                                }
+                                                                                return '';
+                                                                            })();
+                                                                            setDigitalEgressInitialClient(reqClient);
                                                                             setDigitalEgressItems([{
                                                                                 codigo: sp.pn || '',
                                                                                 cantidad: Number(sp.cantidad) || 1,
