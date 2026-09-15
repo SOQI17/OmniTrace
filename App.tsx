@@ -1160,7 +1160,7 @@ export default function App() {
                 <NavButton active={activeTab==='LOGISTICS'} onClick={()=>setActiveTab('LOGISTICS')} icon={<Truck size={18}/>} label="2. Logística" disabled={!canViewLogistics} />
                 <NavButton active={activeTab==='DOCS'} onClick={()=>setActiveTab('DOCS')} icon={<FileCheck size={18}/>} label="Documentos" />
                 <NavButton active={activeTab==='WAREHOUSE'} onClick={()=>setActiveTab('WAREHOUSE')} icon={<Warehouse size={18}/>} label="3. Bodega" />
-                <NavButton active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode size={18}/>} label="4. Escáner" />
+                <NavButton active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode size={18}/>} label="4. Egreso QR" />
                 <NavButton active={activeTab==='RETURNS'} onClick={()=>setActiveTab('RETURNS')} icon={<RotateCcw size={18}/>} label="5. Retornos" />
                 <NavButton active={activeTab==='SPAREPARTS'} onClick={()=>setActiveTab('SPAREPARTS')} icon={<Package size={18}/>} label="6. Repuestos" />
                 {isAdmin && (
@@ -1255,7 +1255,12 @@ export default function App() {
             )}
 
             {activeTab === 'SCANNER' && (
-                <ScannerModule assets={assets} />
+                <ScannerModule 
+                  assets={assets} 
+                  spareParts={spareParts}
+                  onOpenDigitalEgress={handleOpenDigitalEgress}
+                  showToast={showToast}
+                />
             )}
                     {/* ── MÓDULO REPUESTOS ── */}
             {activeTab === 'SPAREPARTS' && (
@@ -1294,7 +1299,7 @@ export default function App() {
             <NavButton mobileMode active={activeTab==='LOGISTICS'} onClick={()=>setActiveTab('LOGISTICS')} icon={<Truck />} label="Logist" disabled={!canViewLogistics} />
             <NavButton mobileMode active={activeTab==='DOCS'} onClick={()=>setActiveTab('DOCS')} icon={<FileCheck />} label="Docs" />
             <NavButton mobileMode active={activeTab==='WAREHOUSE'} onClick={()=>setActiveTab('WAREHOUSE')} icon={<Warehouse />} label="Bodega" />
-            <NavButton mobileMode active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode />} label="Audit" />
+            <NavButton mobileMode active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode />} label="Egreso QR" />
             <NavButton mobileMode active={activeTab==='RETURNS'} onClick={()=>setActiveTab('RETURNS')} icon={<RotateCcw />} label="Retornos" />
             <NavButton mobileMode active={activeTab==='SPAREPARTS'} onClick={()=>setActiveTab('SPAREPARTS')} icon={<Package />} label="Repuestos" />
             {isAdmin && (
