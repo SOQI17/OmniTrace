@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { Html5Qrcode } from 'html5-qrcode';
 import { Asset, SparePart, DigitalEgressItem } from '../../types';
 import { 
   QrCode, 
@@ -57,9 +58,7 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
   // Cámara
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const scanIntervalRef = useRef<any>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
 
   // Función de búsqueda de código en Activos y Repuestos
   const processScannedCode = useCallback((rawQuery: string) => {
@@ -141,66 +140,95 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
   };
 
   // Detener stream de cámara
-  const stopCamera = useCallback(() => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
+  const stopCamera = useCallback(async () => {
+    if (scannerRef.current) {
+      try {
+        if (scannerRef.current.isScanning) {
+          await scannerRef.current.stop();
+        }
+        scannerRef.current.clear();
+      } catch (err) {
+        console.warn('Error al detener cámara:', err);
+      }
+      scannerRef.current = null;
     }
     setCameraActive(false);
   }, []);
 
-  // Iniciar cámara con detección QR
-  const startCamera = async () => {
+  // Iniciar cámara con detección QR usando Html5Qrcode
+  const startCamera = () => {
     setCameraError(null);
-    try {
-      const constraints: MediaStreamConstraints = {
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
+    setCameraActive(true);
 
-      // Si el navegador soporta BarcodeDetector nativo (Chrome / Android / iOS moderno)
-      if ('BarcodeDetector' in window) {
-        const barcodeDetector = new (window as any).BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39'] });
-        scanIntervalRef.current = setInterval(async () => {
-          if (videoRef.current && videoRef.current.readyState >= 2) {
-            try {
-              const barcodes = await barcodeDetector.detect(videoRef.current);
-              if (barcodes && barcodes.length > 0) {
-                const detectedVal = barcodes[0].rawValue;
-                if (detectedVal) {
-                  processScannedCode(detectedVal);
-                  stopCamera();
-                }
-              }
-            } catch {
-              // Ignorar frames sin código
+    // Permitir que React monte el nodo DOM en el siguiente ciclo
+    setTimeout(async () => {
+      try {
+        const elementId = 'omnitrace-qr-reader';
+        const el = document.getElementById(elementId);
+        if (!el) {
+          setCameraError('No se encontró el visor de la cámara.');
+          setCameraActive(false);
+          return;
+        }
+
+        if (scannerRef.current) {
+          try {
+            if (scannerRef.current.isScanning) await scannerRef.current.stop();
+            scannerRef.current.clear();
+          } catch {}
+          scannerRef.current = null;
+        }
+
+        const html5QrCode = new Html5Qrcode(elementId);
+        scannerRef.current = html5QrCode;
+
+        await html5QrCode.start(
+          { facingMode: 'environment' },
+          {
+            fps: 15,
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.0
+          },
+          (decodedText) => {
+            if (decodedText) {
+              processScannedCode(decodedText);
+              stopCamera();
             }
+          },
+          () => {
+            // Ignorar frames sin código
           }
-        }, 300);
+        );
+      } catch (err: any) {
+        console.error('Error al inicializar cámara:', err);
+        let msg = 'No se pudo acceder a la cámara.';
+        const errStr = String(err).toLowerCase();
+        if (errStr.includes('notallowed') || errStr.includes('permission')) {
+          msg = 'Permiso denegado. Permite el acceso a la cámara en la configuración de tu navegador.';
+        } else if (errStr.includes('notfound') || errStr.includes('devices')) {
+          msg = 'No se encontró ninguna cámara disponible en este dispositivo.';
+        } else if (errStr.includes('readable') || errStr.includes('in use')) {
+          msg = 'La cámara está siendo usada por otra aplicación o pestaña.';
+        } else {
+          msg = `Error de cámara: ${err?.message || err}`;
+        }
+        setCameraError(msg);
+        setCameraActive(false);
       }
-    } catch (err: any) {
-      setCameraError('No se pudo acceder a la cámara. Revisa los permisos o ingresa el código manualmente.');
-      setCameraActive(false);
-    }
+    }, 150);
   };
 
   // Limpiar stream al desmontar
   useEffect(() => {
     return () => {
-      stopCamera();
+      if (scannerRef.current) {
+        try {
+          if (scannerRef.current.isScanning) scannerRef.current.stop();
+          scannerRef.current.clear();
+        } catch {}
+      }
     };
-  }, [stopCamera]);
+  }, []);
 
   // Despachar Egreso Digital con 1 clic
   const handleProceedToEgress = () => {
@@ -261,13 +289,9 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
 
       {/* ── VISOR DE CÁMARA (SI ESTÁ ACTIVA) ── */}
       {cameraActive && (
-        <div className="relative bg-black rounded-3xl overflow-hidden shadow-2xl border-2 border-blue-500 max-w-md mx-auto aspect-[4/3] flex items-center justify-center animate-fadeIn">
-          <video 
-            ref={videoRef} 
-            className="w-full h-full object-cover" 
-            playsInline 
-            muted 
-          />
+        <div className="relative bg-black rounded-3xl overflow-hidden shadow-2xl border-2 border-blue-500 max-w-md mx-auto aspect-square flex flex-col items-center justify-center animate-fadeIn">
+          <div id="omnitrace-qr-reader" className="w-full h-full [&_video]:w-full [&_video]:h-full [&_video]:object-cover [&_video]:rounded-2xl"></div>
+          
           {/* Mirilla de Escáner tipo Visor */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="w-56 h-56 border-2 border-blue-400/80 rounded-2xl relative shadow-[0_0_50px_rgba(59,130,246,0.3)]">
@@ -278,9 +302,9 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
               <div className="absolute inset-x-0 top-1/2 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-pulse"></div>
             </div>
           </div>
-          <div className="absolute bottom-3 inset-x-0 text-center pointer-events-none">
-            <span className="bg-black/70 backdrop-blur-sm text-white px-3 py-1 rounded-full text-[10px] font-bold tracking-wider">
-              Enfoca el código QR del repuesto
+          <div className="absolute bottom-3 inset-x-0 text-center pointer-events-none z-10">
+            <span className="bg-black/75 backdrop-blur-sm text-white px-3 py-1 rounded-full text-[10px] font-bold tracking-wider">
+              Enfoca el código QR o código de barras
             </span>
           </div>
         </div>
