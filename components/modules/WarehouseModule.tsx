@@ -388,8 +388,8 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
   return (
     <div className="space-y-6 animate-fadeIn">
       {/* ── Subtab Nav ── */}
-      <div className="bg-white dark:bg-slate-800 p-2 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-wrap gap-2">
-        <button onClick={() => setWarehouseSubTab('ENTRY')} className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-[10px] uppercase font-black tracking-widest flex items-center justify-center gap-3 transition-all ${warehouseSubTab === 'ENTRY' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
+      <div className="bg-white dark:bg-slate-800 p-1.5 sm:p-2 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex overflow-x-auto scrollbar-none gap-2">
+        <button onClick={() => setWarehouseSubTab('ENTRY')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg text-[10px] uppercase font-black tracking-widest flex items-center justify-center gap-2 sm:gap-3 transition-all whitespace-nowrap shrink-0 ${warehouseSubTab === 'ENTRY' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
           <Truck size={18} /> <span>Recepción</span>
           {assets.filter(a => a.current_status === AssetStatus.CUSTOMS).length > 0 && (
             <span className="bg-white text-slate-900 w-5 h-5 flex items-center justify-center rounded-full font-black animate-pulse shadow-sm">
@@ -397,10 +397,10 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
             </span>
           )}
         </button>
-        <button onClick={() => setWarehouseSubTab('INVENTORY')} className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-[10px] uppercase font-black tracking-widest flex items-center justify-center gap-3 transition-all ${warehouseSubTab === 'INVENTORY' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
+        <button onClick={() => setWarehouseSubTab('INVENTORY')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg text-[10px] uppercase font-black tracking-widest flex items-center justify-center gap-2 sm:gap-3 transition-all whitespace-nowrap shrink-0 ${warehouseSubTab === 'INVENTORY' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
           <Layers size={18} /> <span>Inventario</span>
         </button>
-        <button onClick={() => setWarehouseSubTab('MOVEMENTS')} className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-[10px] uppercase font-black tracking-widest flex items-center justify-center gap-3 transition-all ${warehouseSubTab === 'MOVEMENTS' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
+        <button onClick={() => setWarehouseSubTab('MOVEMENTS')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg text-[10px] uppercase font-black tracking-widest flex items-center justify-center gap-2 sm:gap-3 transition-all whitespace-nowrap shrink-0 ${warehouseSubTab === 'MOVEMENTS' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
           <ArrowRight size={18} /> <span>Salidas</span>
         </button>
       </div>
@@ -408,13 +408,82 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
       {/* ── SUBTAB RECEPCIÓN ── */}
       {warehouseSubTab === 'ENTRY' && (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <div className="bg-slate-800 px-8 py-6 text-white">
-            <h3 className="font-black uppercase tracking-widest flex items-center gap-3">
-              <PackageCheck size={24}/> Recepción de Mercadería
+          <div className="bg-slate-800 px-5 sm:px-8 py-4 sm:py-6 text-white">
+            <h3 className="font-black uppercase tracking-widest flex items-center gap-3 text-sm sm:text-base">
+              <PackageCheck size={22}/> Recepción de Mercadería
             </h3>
             <p className="text-slate-300 text-[10px] uppercase font-bold mt-1 tracking-widest opacity-80">Órdenes con Importación Cerrada listas para ingreso</p>
           </div>
-          <div className="overflow-x-auto">
+
+          {/* Tarjetas Móvil (sm:hidden) */}
+          <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-700">
+            {assets.filter(a => a.current_status === AssetStatus.CUSTOMS).map(asset => {
+              const condicion = asset.metadata.condicion ?? '';
+              const condBadge = (() => {
+                const c = condicion.toLowerCase();
+                if (c.includes('warranty') || c.includes('garantia') || c.includes('garantía'))
+                  return 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800';
+                if (c.includes('service') || c.includes('contrato') || c.includes('servicio'))
+                  return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800';
+                if (c.includes('loan') || c.includes('prestamo') || c.includes('préstamo'))
+                  return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800';
+                if (c.includes('purchase') || c.includes('compra'))
+                  return 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800';
+                return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600';
+              })();
+
+              return (
+                <div key={asset.id} className="p-4 space-y-2.5 bg-white dark:bg-slate-800">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-mono font-black text-slate-800 dark:text-slate-100 text-sm block truncate">
+                        {asset.metadata.pn}
+                      </span>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 font-medium line-clamp-2 mt-0.5">
+                        {asset.metadata.description}
+                      </p>
+                    </div>
+                    <span className="bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 font-black text-xs px-2.5 py-1 rounded-full border border-amber-200 dark:border-amber-800 shrink-0">
+                      Cant: {asset.metadata.cantidad}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                    <span className={`px-2 py-0.5 rounded-md font-black uppercase tracking-wide border ${condBadge}`}>
+                      {condicion || '-'}
+                    </span>
+                    {asset.metadata.numero_orden_ge && (
+                      <span className="bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono px-2 py-0.5 rounded">
+                        GE: {asset.metadata.numero_orden_ge}
+                      </span>
+                    )}
+                    {asset.metadata.workflow_id && (
+                      <span className="bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 font-bold px-2 py-0.5 rounded">
+                        WF: {asset.metadata.workflow_id}
+                      </span>
+                    )}
+                  </div>
+
+                  {canEditWarehouse && (
+                    <button 
+                      onClick={() => setReceivingAsset(asset)} 
+                      className="w-full bg-slate-900 dark:bg-emerald-600 text-white py-2.5 px-4 rounded-xl font-black uppercase text-xs tracking-wider hover:bg-emerald-600 transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <CheckSquare size={16}/> Ingresar a Bodega
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {assets.filter(a => a.current_status === AssetStatus.CUSTOMS).length === 0 && (
+              <div className="p-8 text-center text-slate-400 uppercase font-black text-xs tracking-widest">
+                Bandeja de entrada vacía
+              </div>
+            )}
+          </div>
+
+          {/* Tabla Escritorio (hidden sm:block) */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-xs text-left min-w-[800px]">
               <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 font-black uppercase tracking-widest">
                 <tr>
@@ -476,35 +545,147 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
 
       {/* ── SUBTAB INVENTARIO ── */}
       {warehouseSubTab === 'INVENTORY' && (
-        <div className="space-y-6">
-          <div className="flex flex-col md:flex-row justify-between items-center bg-white dark:bg-slate-800 p-5 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 gap-6">
-            <div className="relative w-full md:max-w-md group">
-              <Search className="absolute left-4 top-3.5 text-slate-300 group-focus-within:text-slate-800 transition-colors" size={20} />
-              <input type="text" placeholder="Buscar por sku o descripción..." value={inventorySearch} onChange={(e) => setInventorySearch(e.target.value)} className="w-full pl-12 pr-6 py-3.5 border border-slate-200 dark:border-slate-700 rounded-lg focus:border-slate-800 focus:ring-0 outline-none font-bold text-sm bg-slate-50 dark:bg-slate-900 dark:text-white"/>
+        <div className="space-y-4 sm:space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center bg-white dark:bg-slate-800 p-3 sm:p-5 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 gap-3 sm:gap-6">
+            <div className="relative w-full sm:max-w-md group">
+              <Search className="absolute left-3.5 top-3 text-slate-300 group-focus-within:text-slate-800 transition-colors" size={18} />
+              <input type="text" placeholder="Buscar por sku o descripción..." value={inventorySearch} onChange={(e) => setInventorySearch(e.target.value)} className="w-full pl-10 pr-4 py-2.5 sm:py-3.5 border border-slate-200 dark:border-slate-700 rounded-lg focus:border-slate-800 focus:ring-0 outline-none font-bold text-xs sm:text-sm bg-slate-50 dark:bg-slate-900 dark:text-white"/>
             </div>
-            <div className="flex w-full md:w-auto gap-4">
+            <div className="flex w-full sm:w-auto gap-2">
               <button 
                 onClick={() => onOpenDigitalEgress('BODEGA', '', [])}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all shadow-md active:scale-95"
+                className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-4 sm:px-6 py-2.5 sm:py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 whitespace-nowrap"
                 title="Crear un Egreso Digital oficial seleccionando repuestos o inventario"
               >
-                <FileText size={18}/> Egreso Digital
+                <FileText size={16}/> Egreso Digital
               </button>
               {canEditWarehouse && (
-                <button onClick={handleImportInitialInventory} disabled={importing} className={`flex-1 bg-slate-900 dark:bg-blue-600 text-white px-6 py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-slate-800 dark:hover:bg-blue-700 transition-all shadow-md active:scale-95 ${importing ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                  {importing ? <Loader2 size={18} className="animate-spin"/> : <Database size={18}/>} Importar PDF
+                <button onClick={() => setShowAddProductModal(true)} className="bg-white border border-slate-200 dark:bg-slate-700 dark:border-slate-600 text-slate-700 dark:text-white px-3 sm:px-5 py-2.5 sm:py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-600 transition-all shadow-sm active:scale-95 whitespace-nowrap">
+                  <Plus size={16}/> <span className="hidden sm:inline">Nuevo Item</span><span className="sm:hidden">Nuevo</span>
                 </button>
               )}
               {canEditWarehouse && (
-                <button onClick={() => setShowAddProductModal(true)} className="flex-1 bg-white border border-slate-200 dark:bg-slate-700 dark:border-slate-600 text-slate-700 dark:text-white px-6 py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-slate-50 dark:hover:bg-slate-600 transition-all shadow-sm active:scale-95">
-                  <Plus size={18}/> Nuevo Item
+                <button onClick={handleImportInitialInventory} disabled={importing} className={`hidden sm:flex bg-slate-900 dark:bg-blue-600 text-white px-4 py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest items-center justify-center gap-2 hover:bg-slate-800 dark:hover:bg-blue-700 transition-all shadow-md active:scale-95 whitespace-nowrap ${importing ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  {importing ? <Loader2 size={16} className="animate-spin"/> : <Database size={16}/>} Importar
                 </button>
               )}
             </div>
           </div>
 
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col">
-            <div className="overflow-auto max-h-[60vh]">
+            {/* Mobile Cards para Inventario (sm:hidden) */}
+            <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-700/60">
+              {inventoryList.map(item => {
+                const condiciones = [...new Set(item.assets.map(a => a.metadata.condicion).filter(Boolean))];
+                const clientes = [...new Set(
+                  item.assets
+                    .map(a => a.metadata?.cliente_final?.trim())
+                    .filter(c => c && c.toUpperCase() !== 'STOCK')
+                )];
+                const condColor = (c: string) => {
+                  const l = c.toLowerCase();
+                  if (l.includes('warranty') || l.includes('garantia') || l.includes('garantía'))
+                    return 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800';
+                  if (l.includes('service') || l.includes('contrato') || l.includes('servicio'))
+                    return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800';
+                  if (l.includes('loan') || l.includes('prestamo') || l.includes('préstamo'))
+                    return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800';
+                  if (l.includes('purchase') || l.includes('compra'))
+                    return 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800';
+                  return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600';
+                };
+
+                return (
+                  <div key={item.pn} className="p-3.5 space-y-2.5 bg-white dark:bg-slate-800">
+                    {/* Header: SKU + Stock + Costo */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="font-mono font-black text-slate-900 dark:text-white text-sm tracking-tight block truncate">
+                          {item.pn}
+                        </span>
+                        <p className="text-xs text-slate-700 dark:text-slate-300 font-medium line-clamp-2 mt-0.5">
+                          {item.description}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end shrink-0">
+                        <span className={`px-2.5 py-0.5 rounded-full font-black text-xs ${item.stock > 0 ? 'bg-emerald-600 text-white' : 'bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400'}`}>
+                          {item.stock} u.
+                        </span>
+                        <span className="font-mono text-[11px] font-bold text-slate-400 mt-1">
+                          $${item.cost.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Chips de Categoría, Condiciones y Clientes */}
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                      {item.category && (
+                        <span className="font-black uppercase tracking-wider text-slate-500 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded">
+                          {item.category}
+                        </span>
+                      )}
+                      {condiciones.map(c => (
+                        <span key={c} className={`px-2 py-0.5 rounded font-black uppercase tracking-wide border ${condColor(c)}`}>
+                          {c}
+                        </span>
+                      ))}
+                      {clientes.map(c => (
+                        <span key={c} className="px-2 py-0.5 rounded font-black uppercase tracking-wide bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Acciones 1-tap en móvil */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <button 
+                        onClick={() => {
+                          const reqAsset = item.assets?.find(a => {
+                            const c = a.metadata?.cliente_final?.trim();
+                            return c && c.toUpperCase() !== 'STOCK';
+                          });
+                          const destClient = reqAsset ? reqAsset.metadata.cliente_final.trim() : (item.assets?.find(a => a.warehouse?.destino_final)?.warehouse?.destino_final || '');
+                          onOpenDigitalEgress('BODEGA', destClient, [{
+                            codigo: item.pn,
+                            cantidad: 1,
+                            descripcion: item.description,
+                            serial_number: ''
+                          }]);
+                        }} 
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-3 rounded-lg font-black uppercase text-xs tracking-wider flex items-center justify-center gap-1.5 shadow-xs active:scale-95 transition-all"
+                        title="Generar Egreso Digital"
+                      >
+                        <FileText size={14} /> Egreso Digital
+                      </button>
+                      <button 
+                        onClick={() => setViewingAssetsItem(item)} 
+                        className="p-2 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 rounded-lg hover:text-slate-900 transition-colors" 
+                        title="Ver activos físicos"
+                      >
+                        <Eye size={16} />
+                      </button>
+                      {canEditWarehouse && (
+                        <button 
+                          onClick={() => setEditingItem(item)} 
+                          className="p-2 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 rounded-lg hover:text-blue-600 transition-colors" 
+                          title="Editar"
+                        >
+                          <Edit3 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {inventoryList.length === 0 && (
+                <div className="p-8 text-center text-slate-400 uppercase font-black text-xs tracking-widest">
+                  No hay productos en inventario
+                </div>
+              )}
+            </div>
+
+            {/* Tabla Escritorio (hidden sm:block) */}
+            <div className="hidden sm:block overflow-auto max-h-[60vh]">
               <table className="w-full text-xs text-left min-w-[900px]">
                 <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 font-black uppercase tracking-widest sticky top-0 z-10 shadow-sm">
                   <tr>
@@ -568,7 +749,7 @@ export const WarehouseModule: React.FC<WarehouseModuleProps> = memo(({
                             }
                           </div>
                         </td>
-                        <td className="p-5 text-right font-black font-mono text-slate-400">${item.cost.toFixed(2)}</td>
+                        <td className="p-5 text-right font-black font-mono text-slate-400">$${item.cost.toFixed(2)}</td>
                         <td className="p-5 text-center">
                           <span className={`px-4 py-1.5 rounded-full font-black text-xs shadow-sm ${item.stock > 0 ? 'bg-emerald-600 text-white' : 'bg-red-50 text-red-500 border border-red-100'}`}>
                             {item.stock}

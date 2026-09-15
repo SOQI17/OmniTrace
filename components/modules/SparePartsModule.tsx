@@ -38,7 +38,9 @@ import {
   Award,
   Building2,
   DollarSign,
-  Wrench
+  Wrench,
+  MoreVertical,
+  Filter
 } from 'lucide-react';
 import { FilterSelect } from '../ui/FilterSelect';
 import { generateUUID, sanitizeRow, normalizeSparePartCondition } from '../../utils/helpers';
@@ -83,12 +85,22 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
   const [sparePartsFilterMod, setSparePartsFilterMod] = useState('');
   const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
   const [sparePartsFilterOrigen, setSparePartsFilterOrigen] = useState('');
-  const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az'>('newest');
+  const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az' | 'price_desc' | 'price_asc'>('newest');
   const [showSparePartModal, setShowSparePartModal] = useState(false);
   const [editingSparePart, setEditingSparePart] = useState<SparePart | null>(null);
   const [csvImporting, setCsvImporting] = useState(false);
   const [sparePartsViewMode, setSparePartsViewMode] = useState<'TABLE' | 'ANALYTICS'>('TABLE');
   const [sparePartsAnalyticsScope, setSparePartsAnalyticsScope] = useState<'GLOBAL' | 'FILTERED'>('GLOBAL');
+  const [showAdminMenu, setShowAdminMenu] = useState(false);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const activeFilterCount = (sparePartsFilterAnio ? 1 : 0) + 
+    (sparePartsFilterMes ? 1 : 0) + 
+    (sparePartsFilterDia ? 1 : 0) + 
+    (sparePartsFilterMod ? 1 : 0) + 
+    (sparePartsFilterCondicion ? 1 : 0) + 
+    (sparePartsFilterOrigen ? 1 : 0) + 
+    (sparePartsSort !== 'newest' ? 1 : 0);
+
 
   const [sparePartsPage, setSparePartsPage] = useState(1);
   const [sparePartsPageSize, setSparePartsPageSize] = useState(50);
@@ -213,6 +225,10 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
           return (b.pn || '').localeCompare(a.pn || '');
         case 'cliente_az':
           return (a.cliente || '').localeCompare(b.cliente || '');
+        case 'price_desc':
+          return (Number(b.precio) || 0) - (Number(a.precio) || 0);
+        case 'price_asc':
+          return (Number(a.precio) || 0) - (Number(b.precio) || 0);
         default:
           return 0;
       }
@@ -820,7 +836,100 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                     Historial de repuestos instalados en clientes. Se actualiza automáticamente con cada solicitud.
                                 </p>
                             </div>
-                            <div className="flex items-center gap-2 flex-wrap">
+                            {/* ── Barra de Acciones Móvil (sm:hidden) ── */}
+                            <div className="flex sm:hidden flex-col gap-2 w-full">
+                                <div className="flex items-center gap-2 w-full">
+                                    <button 
+                                        onClick={() => setShowSparePartModal(true)}
+                                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-black uppercase tracking-wider bg-emerald-600 text-white shadow-sm active:scale-95"
+                                    >
+                                        <Plus size={15}/> Nuevo
+                                    </button>
+                                    <button 
+                                        onClick={() => {
+                                            if (selectedSparePartIds.size > 0) {
+                                                const selParts = spareParts.filter(p => selectedSparePartIds.has(p.id));
+                                                const firstClient = selParts.map(p => {
+                                                    if (p.cliente && p.cliente.trim() !== '' && p.cliente.trim().toUpperCase() !== 'STOCK') return p.cliente.trim();
+                                                    const a = p.asset_id ? assets.find(x => x.id === p.asset_id) : undefined;
+                                                    if (a?.metadata?.cliente_final && a.metadata.cliente_final.trim().toUpperCase() !== 'STOCK') return a.metadata.cliente_final.trim();
+                                                    return '';
+                                                }).find(c => Boolean(c)) || '';
+                                                const items = selParts.map(sp => ({
+                                                    codigo: sp.pn || '',
+                                                    cantidad: Number(sp.cantidad) || 1,
+                                                    descripcion: sp.descripcion || '',
+                                                    serial_number: '',
+                                                    spare_part_id: sp.id
+                                                }));
+                                                onOpenDigitalEgress('REPUESTOS', firstClient, items);
+                                            } else {
+                                                onOpenDigitalEgress('REPUESTOS', '', []);
+                                            }
+                                        }}
+                                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-xs font-black uppercase tracking-wider bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm active:scale-95"
+                                    >
+                                        <FileText size={15}/> Egreso
+                                        {selectedSparePartIds.size > 0 && (
+                                            <span className="bg-emerald-500 text-white px-1.5 py-0.2 text-[9px] rounded-full font-bold">
+                                                {selectedSparePartIds.size}
+                                            </span>
+                                        )}
+                                    </button>
+                                    <button
+                                        onClick={() => setShowAdminMenu(prev => !prev)}
+                                        className={`p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 shadow-xs transition-all ${showAdminMenu ? 'ring-2 ring-emerald-500 bg-slate-50 dark:bg-slate-700' : ''}`}
+                                        title="Más opciones y herramientas"
+                                    >
+                                        <MoreVertical size={16} />
+                                    </button>
+                                </div>
+
+                                {/* Menú Desplegable Móvil */}
+                                {showAdminMenu && (
+                                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3 shadow-xl space-y-2 animate-fadeIn text-xs">
+                                        <label className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider cursor-pointer border ${csvImporting ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'}`}>
+                                            {csvImporting ? <Loader2 size={14} className="animate-spin"/> : <Upload size={14}/>}
+                                            {csvImporting ? 'Importando...' : 'Importar CSV/Excel'}
+                                            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleCsvImport} disabled={csvImporting}/>
+                                        </label>
+                                        <button 
+                                            onClick={handleExportSpareParts} 
+                                            disabled={filteredSpareParts.length === 0}
+                                            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 disabled:opacity-40"
+                                        >
+                                            <Download size={14}/> Exportar Excel
+                                        </button>
+                                        {assets.length > 0 && (
+                                            <button 
+                                                onClick={handleSyncFromRequests} 
+                                                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                                            >
+                                                <RefreshCw size={14}/> Sincronizar Solicitudes
+                                            </button>
+                                        )}
+                                        {canManageSpareParts && spareParts.length > 0 && (
+                                            <>
+                                                <button 
+                                                    onClick={handleBatchNormalizeConditions} 
+                                                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                                                >
+                                                    <CheckSquare size={14}/> Agrupar Condiciones
+                                                </button>
+                                                <button 
+                                                    onClick={handleClearSpareParts} 
+                                                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900"
+                                                >
+                                                    <Trash2 size={14}/> Vaciar Base Completa
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* ── Barra de Acciones Desktop (hidden sm:flex) ── */}
+                            <div className="hidden sm:flex items-center gap-2 flex-wrap">
                                 {/* Importar CSV */}
                                 <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider cursor-pointer transition-all border ${csvImporting ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 border-slate-200 dark:border-slate-600' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400'}`}>
                                     {csvImporting ? <Loader2 size={14} className="animate-spin"/> : <Upload size={14}/>}
@@ -831,7 +940,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                 {/* Sincronizar desde Solicitudes existentes */}
                                 {assets.length > 0 && (
                                     <button 
-                                        onClick={handleSyncFromRequests}
+                                        onClick={handleSyncFromRequests} 
                                         title="Sincronizar repuestos provenientes de solicitudes y activos del sistema"
                                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 transition-all"
                                     >
@@ -842,7 +951,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                 {/* Agrupar y normalizar condiciones en base de datos (solo Admin / Alexis) */}
                                 {canManageSpareParts && spareParts.length > 0 && (
                                     <button 
-                                        onClick={handleBatchNormalizeConditions}
+                                        onClick={handleBatchNormalizeConditions} 
                                         title="Agrupa y normaliza las condiciones de los repuestos en las 4 categorías estándar (Contrato de Servicios, Garantías, DOA, Ventas)"
                                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 hover:bg-amber-100 transition-all"
                                     >
@@ -853,7 +962,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                 {/* Limpiar catálogo actual (solo Admin / Alexis) */}
                                 {canManageSpareParts && spareParts.length > 0 && (
                                     <button 
-                                        onClick={handleClearSpareParts}
+                                        onClick={handleClearSpareParts} 
                                         title="Eliminar todos los registros para volver a subir el archivo limpio"
                                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider text-red-500 hover:text-red-600 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 hover:bg-red-100 transition-all"
                                     >
@@ -971,8 +1080,8 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
 
                         {sparePartsViewMode === 'TABLE' ? (
                             <>
-                        {/* ── KPIs ── */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {/* ── KPIs Desktop ── */}
+                        <div className="hidden sm:grid grid-cols-2 md:grid-cols-4 gap-4">
                             <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex items-start justify-between">
                                 <div>
                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Total Registros</p>
@@ -1007,369 +1116,662 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                             </div>
                         </div>
 
+                        {/* ── KPIs Móvil (Compacto y Ligero) ── */}
+                        <div className="sm:hidden grid grid-cols-2 gap-2">
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 flex items-center justify-between shadow-xs">
+                                <div>
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Total Repuestos</p>
+                                    <h4 className="text-base font-black text-slate-900 dark:text-white leading-tight">{spareParts.length.toLocaleString()}</h4>
+                                    <p className="text-[9px] text-slate-400">{totalUnidades.toLocaleString()} u.</p>
+                                </div>
+                                <div className="p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg text-emerald-500"><Package size={16}/></div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 flex items-center justify-between shadow-xs">
+                                <div>
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Clientes</p>
+                                    <h4 className="text-base font-black text-slate-900 dark:text-white leading-tight">{uniqueClientes.length}</h4>
+                                    <p className="text-[9px] text-slate-400">en base</p>
+                                </div>
+                                <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-blue-500"><Users size={16}/></div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 flex items-center justify-between shadow-xs">
+                                <div>
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Modalidades</p>
+                                    <h4 className="text-base font-black text-slate-900 dark:text-white leading-tight">{uniqueMods.length}</h4>
+                                    <p className="text-[9px] text-slate-400 truncate max-w-[80px]">{uniqueMods.slice(0, 2).join(', ')}</p>
+                                </div>
+                                <div className="p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg text-purple-500"><Cpu size={16}/></div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 flex items-center justify-between shadow-xs">
+                                <div>
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Filtrados</p>
+                                    <h4 className="text-base font-black text-slate-900 dark:text-white leading-tight">{filteredSpareParts.length.toLocaleString()}</h4>
+                                    <p className="text-[9px] text-slate-400">mostrando</p>
+                                </div>
+                                <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-amber-500"><Database size={16}/></div>
+                            </div>
+                        </div>
+
                         {/* ── Filtros ── */}
-                        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
-                            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex flex-wrap gap-3 items-center">
-                                {/* Búsqueda */}
-                                <div className="relative flex-1 min-w-[220px]">
-                                    <Search size={14} className="absolute left-3 top-2.5 text-slate-400"/>
-                                    <input
-                                        type="text"
-                                        placeholder="Buscar P/N, descripción, cliente, orden..."
-                                        value={sparePartsSearch}
-                                        onChange={e => handleSparePartsSearchChange(e.target.value)}
-                                        className="w-full pl-9 pr-4 py-2 text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
-                                    />
-                                    {sparePartsSearch && (
-                                        <button onClick={() => { setSparePartsSearch(''); setSparePartsDebouncedSearch(''); }} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
-                                            <X size={14}/>
+                        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                            <div className="px-4 py-3 sm:px-5 sm:py-4 border-b border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row flex-wrap gap-3 items-stretch sm:items-center">
+                                {/* Búsqueda + Botón de Filtros Móvil */}
+                                <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-1">
+                                    <div className="relative flex-1 min-w-[200px]">
+                                        <Search size={14} className="absolute left-3 top-2.5 text-slate-400"/>
+                                        <input
+                                            type="text"
+                                            placeholder="Buscar P/N, descripción, cliente, orden..."
+                                            value={sparePartsSearch}
+                                            onChange={e => handleSparePartsSearchChange(e.target.value)}
+                                            className="w-full pl-9 pr-8 py-2 text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
+                                        />
+                                        {sparePartsSearch && (
+                                            <button onClick={() => { setSparePartsSearch(''); setSparePartsDebouncedSearch(''); }} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
+                                                <X size={14}/>
+                                            </button>
+                                        )}
+                                    </div>
+                                    <button 
+                                        type="button"
+                                        onClick={() => setShowMobileFilters(prev => !prev)}
+                                        className={`sm:hidden flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition-colors shrink-0 ${
+                                            activeFilterCount > 0 || showMobileFilters
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                                                : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                                        }`}
+                                    >
+                                        <Filter size={14}/>
+                                        <span>Filtros</span>
+                                        {activeFilterCount > 0 && (
+                                            <span className="bg-emerald-500 text-white rounded-full w-4 h-4 text-[9px] flex items-center justify-center font-black">
+                                                {activeFilterCount}
+                                            </span>
+                                        )}
+                                    </button>
+                                </div>
+
+                                {/* Filtros colapsables en móvil / inline en desktop */}
+                                <div className={`${showMobileFilters ? 'flex' : 'hidden'} sm:flex flex-wrap gap-2.5 items-center w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700`}>
+                                    {/* Ordenamiento */}
+                                    <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                                        <ArrowUpDown size={14} className="text-slate-400 shrink-0" />
+                                        <select
+                                            value={sparePartsSort}
+                                            onChange={e => setSparePartsSort(e.target.value as any)}
+                                            className="w-full sm:w-auto text-xs font-semibold px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg dark:text-slate-200 outline-none focus:ring-2 focus:ring-emerald-400"
+                                        >
+                                            <option value="newest">📅 F. Pedido más reciente</option>
+                                            <option value="oldest">📅 F. Pedido más antigua</option>
+                                            <option value="ge_newest">🔢 Orden GE más reciente</option>
+                                            <option value="ge_oldest">🔢 Orden GE más antigua</option>
+                                            <option value="pn_az">🔤 P/N (A - Z)</option>
+                                            <option value="pn_za">🔤 P/N (Z - A)</option>
+                                            <option value="cliente_az">🏢 Cliente (A - Z)</option>
+                                            <option value="price_desc">💰 Precio (Mayor a Menor)</option>
+                                            <option value="price_asc">💰 Precio (Menor a Mayor)</option>
+                                        </select>
+                                    </div>
+                                    {/* Filtro Jerárquico: Año -> Mes -> Día */}
+                                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-700 w-full sm:w-auto">
+                                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 px-2 flex items-center gap-1">
+                                            <Calendar size={12} className="text-emerald-500" /> Fecha:
+                                        </span>
+                                        {/* Año */}
+                                        <FilterSelect 
+                                            value={sparePartsFilterAnio} 
+                                            onChange={(v) => { setSparePartsFilterAnio(v); setSparePartsFilterMes(''); setSparePartsFilterDia(''); setSparePartsPage(1); }} 
+                                            placeholder="Año"
+                                            options={(uniqueAnios as string[]).map(a => ({ value: a, label: `Año ${a}` }))} 
+                                        />
+                                        {/* Mes */}
+                                        <FilterSelect 
+                                            value={sparePartsFilterMes} 
+                                            onChange={(v) => { setSparePartsFilterMes(v); setSparePartsFilterDia(''); setSparePartsPage(1); }} 
+                                            placeholder="Mes"
+                                            options={uniqueMeses} 
+                                        />
+                                        {/* Día */}
+                                        <FilterSelect 
+                                            value={sparePartsFilterDia} 
+                                            onChange={(v) => { setSparePartsFilterDia(v); setSparePartsPage(1); }} 
+                                            placeholder="Día"
+                                            options={uniqueDias} 
+                                        />
+                                    </div>
+                                    {/* MOD */}
+                                    <FilterSelect value={sparePartsFilterMod} onChange={(v) => { setSparePartsFilterMod(v); setSparePartsPage(1); }} placeholder="Todas las MOD"
+                                        options={(uniqueMods as string[]).sort().map(m => ({ value: m, label: m }))} />
+                                    {/* Condición */}
+                                    <FilterSelect value={sparePartsFilterCondicion} onChange={(v) => { setSparePartsFilterCondicion(v); setSparePartsPage(1); }} placeholder="Todas las condiciones"
+                                        options={(uniqueCondiciones as string[]).sort().map(c => ({ value: c, label: c }))} />
+                                    {/* Origen */}
+                                    <FilterSelect value={sparePartsFilterOrigen} onChange={(v) => { setSparePartsFilterOrigen(v); setSparePartsPage(1); }} placeholder="Todos los orígenes"
+                                        options={[
+                                            { value: 'SOLICITUD', label: 'Origen: Solicitud' },
+                                            { value: 'CSV_IMPORT', label: 'Origen: Excel / CSV' },
+                                            { value: 'MANUAL', label: 'Origen: Manual' }
+                                        ]} />
+                                    {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsFilterOrigen || sparePartsSort !== 'newest') && (
+                                        <button onClick={() => { 
+                                            setSparePartsSearch(''); 
+                                            setSparePartsDebouncedSearch(''); 
+                                            setSparePartsFilterAnio(''); 
+                                            setSparePartsFilterMes(''); 
+                                            setSparePartsFilterDia(''); 
+                                            setSparePartsFilterMod(''); 
+                                            setSparePartsFilterCondicion(''); 
+                                            setSparePartsFilterOrigen(''); 
+                                            setSparePartsSort('newest'); 
+                                            setSparePartsPage(1);
+                                        }}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
+                                            <X size={11}/> Limpiar
                                         </button>
                                     )}
                                 </div>
-                                {/* Ordenamiento */}
-                                <div className="flex items-center gap-1.5">
-                                    <ArrowUpDown size={14} className="text-slate-400" />
-                                    <select
-                                        value={sparePartsSort}
-                                        onChange={e => setSparePartsSort(e.target.value as any)}
-                                        className="text-xs font-semibold px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg dark:text-slate-200 outline-none focus:ring-2 focus:ring-emerald-400"
-                                    >
-                                        <option value="newest">📅 F. Pedido más reciente</option>
-                                        <option value="oldest">📅 F. Pedido más antigua</option>
-                                        <option value="ge_newest">🔢 Orden GE más reciente</option>
-                                        <option value="ge_oldest">🔢 Orden GE más antigua</option>
-                                        <option value="pn_az">🔤 P/N (A - Z)</option>
-                                        <option value="pn_za">🔤 P/N (Z - A)</option>
-                                        <option value="cliente_az">🏢 Cliente (A - Z)</option>
-                                    </select>
-                                </div>
-                                {/* Filtro Jerárquico: Año -> Mes -> Día */}
-                                <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-700">
-                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 px-2 flex items-center gap-1">
-                                        <Calendar size={12} className="text-emerald-500" /> Fecha:
-                                    </span>
-                                    {/* Año */}
-                                    <FilterSelect 
-                                        value={sparePartsFilterAnio} 
-                                        onChange={(v) => { setSparePartsFilterAnio(v); setSparePartsFilterMes(''); setSparePartsFilterDia(''); setSparePartsPage(1); }} 
-                                        placeholder="Todos los Años"
-                                        options={(uniqueAnios as string[]).map(a => ({ value: a, label: `Año ${a}` }))} 
-                                    />
-                                    {/* Mes (disponible siempre o dependiente del año) */}
-                                    <FilterSelect 
-                                        value={sparePartsFilterMes} 
-                                        onChange={(v) => { setSparePartsFilterMes(v); setSparePartsFilterDia(''); setSparePartsPage(1); }} 
-                                        placeholder="Todos los Meses"
-                                        options={uniqueMeses} 
-                                    />
-                                    {/* Día (disponible dinámicamente) */}
-                                    <FilterSelect 
-                                        value={sparePartsFilterDia} 
-                                        onChange={(v) => { setSparePartsFilterDia(v); setSparePartsPage(1); }} 
-                                        placeholder="Todos los Días"
-                                        options={uniqueDias} 
-                                    />
-                                </div>
-                                {/* MOD */}
-                                <FilterSelect value={sparePartsFilterMod} onChange={(v) => { setSparePartsFilterMod(v); setSparePartsPage(1); }} placeholder="Todas las MOD"
-                                    options={(uniqueMods as string[]).sort().map(m => ({ value: m, label: m }))} />
-                                {/* Condición */}
-                                <FilterSelect value={sparePartsFilterCondicion} onChange={(v) => { setSparePartsFilterCondicion(v); setSparePartsPage(1); }} placeholder="Todas las condiciones"
-                                    options={(uniqueCondiciones as string[]).sort().map(c => ({ value: c, label: c }))} />
-                                {/* Origen (Excel vs Solicitud vs Manual) */}
-                                <FilterSelect value={sparePartsFilterOrigen} onChange={(v) => { setSparePartsFilterOrigen(v); setSparePartsPage(1); }} placeholder="Todos los orígenes"
-                                    options={[
-                                        { value: 'SOLICITUD', label: 'Origen: Solicitud' },
-                                        { value: 'CSV_IMPORT', label: 'Origen: Excel / CSV' },
-                                        { value: 'MANUAL', label: 'Origen: Manual' }
-                                    ]} />
-                                {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsFilterOrigen || sparePartsSort !== 'newest') && (
-                                    <button onClick={() => { 
-                                        setSparePartsSearch(''); 
-                                        setSparePartsDebouncedSearch(''); 
-                                        setSparePartsFilterAnio(''); 
-                                        setSparePartsFilterMes(''); 
-                                        setSparePartsFilterDia(''); 
-                                        setSparePartsFilterMod(''); 
-                                        setSparePartsFilterCondicion(''); 
-                                        setSparePartsFilterOrigen('');
-                                        setSparePartsSort('newest'); 
-                                        setSparePartsPage(1);
-                                    }}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
-                                        <X size={11}/> Limpiar
-                                    </button>
-                                )}
                             </div>
 
-                            {/* ── Tabla ── */}
-                            <div className="overflow-x-auto">
-                                {sparePartsLoading ? (
-                                    <div className="p-12 text-center text-slate-400">
-                                        <Loader2 size={32} className="animate-spin mx-auto mb-3 text-emerald-400"/>
-                                        <p className="text-xs font-black uppercase tracking-widest">Cargando base de repuestos...</p>
-                                    </div>
-                                ) : filteredSpareParts.length === 0 ? (
-                                    <div className="p-12 text-center text-slate-400">
-                                        <Package size={48} className="mx-auto mb-4 opacity-20"/>
-                                        <p className="font-black uppercase text-xs tracking-widest mb-2">
-                                            {spareParts.length === 0 ? 'No hay repuestos registrados' : 'Sin resultados para los filtros aplicados'}
+                            {/* ── Contenido de Lista / Tabla ── */}
+                            {sparePartsLoading ? (
+                                <div className="p-12 text-center text-slate-400">
+                                    <Loader2 size={32} className="animate-spin mx-auto mb-3 text-emerald-400"/>
+                                    <p className="text-xs font-black uppercase tracking-widest">Cargando base de repuestos...</p>
+                                </div>
+                            ) : filteredSpareParts.length === 0 ? (
+                                <div className="p-12 text-center text-slate-400">
+                                    <Package size={48} className="mx-auto mb-4 opacity-20"/>
+                                    <p className="font-black uppercase text-xs tracking-widest mb-2">
+                                        {spareParts.length === 0 ? 'No hay repuestos registrados' : 'Sin resultados para los filtros aplicados'}
+                                    </p>
+                                    {spareParts.length === 0 && (
+                                        <p className="text-[11px] text-slate-500 mt-2 max-w-xs mx-auto">
+                                            Importa tu base de datos desde un archivo Excel/CSV usando el botón "Importar CSV/Excel"
                                         </p>
-                                        {spareParts.length === 0 && (
-                                            <p className="text-[11px] text-slate-500 mt-2 max-w-xs mx-auto">
-                                                Importa tu base de datos desde un archivo Excel/CSV usando el botón "Importar CSV/Excel"
-                                            </p>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <table className="w-full text-xs text-left min-w-[1100px]">
-                                        <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 uppercase font-black tracking-widest text-[10px] border-b border-slate-100 dark:border-slate-700 select-none">
-                                            <tr>
-                                                <th className="w-10 px-3 py-3 text-center">
-                                                    <input 
-                                                        type="checkbox" 
-                                                        checked={paginatedSpareParts.length > 0 && paginatedSpareParts.every(sp => selectedSparePartIds.has(sp.id))}
-                                                        onChange={(e) => {
-                                                            const next = new Set(selectedSparePartIds);
-                                                            if (e.target.checked) {
-                                                                paginatedSpareParts.forEach(sp => next.add(sp.id));
-                                                            } else {
-                                                                paginatedSpareParts.forEach(sp => next.delete(sp.id));
-                                                            }
-                                                            setSelectedSparePartIds(next);
-                                                        }}
-                                                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                                                        title="Seleccionar todos los de esta página"
-                                                    />
-                                                </th>
-                                                <th 
-                                                    className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
-                                                    onClick={() => setSparePartsSort(s => s === 'pn_az' ? 'pn_za' : 'pn_az')}
-                                                    title="Ordenar por P/N"
+                                    )}
+                                </div>
+                            ) : (
+                                <>
+                                    {/* ── VISTA MÓVIL: TARJETAS TOUCH-FRIENDLY (sm:hidden) ── */}
+                                    <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-700/60">
+                                        {/* Barra de Selección Masiva en Móvil */}
+                                        <div className="px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900/60 flex items-center justify-between text-xs border-b border-slate-100 dark:border-slate-700">
+                                            <label className="flex items-center gap-2 cursor-pointer select-none text-slate-600 dark:text-slate-400 font-bold text-[11px]">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={paginatedSpareParts.length > 0 && paginatedSpareParts.every(sp => selectedSparePartIds.has(sp.id))}
+                                                    onChange={(e) => {
+                                                        const next = new Set(selectedSparePartIds);
+                                                        if (e.target.checked) {
+                                                            paginatedSpareParts.forEach(sp => next.add(sp.id));
+                                                        } else {
+                                                            paginatedSpareParts.forEach(sp => next.delete(sp.id));
+                                                        }
+                                                        setSelectedSparePartIds(next);
+                                                    }}
+                                                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                                                />
+                                                <span>Seleccionar página ({paginatedSpareParts.length})</span>
+                                            </label>
+                                            {selectedSparePartIds.size > 0 && (
+                                                <span className="text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                                                    {selectedSparePartIds.size} selec.
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {paginatedSpareParts.map(sp => {
+                                            const linkedAsset = sp.asset_id ? assets.find(a => a.id === sp.asset_id) : undefined;
+                                            const isSelected = selectedSparePartIds.has(sp.id);
+                                            const condNorm = normalizeSparePartCondition(sp.condicion, sp.precio);
+
+                                            return (
+                                                <div 
+                                                    key={sp.id} 
+                                                    className={`p-3.5 transition-colors ${isSelected ? 'bg-emerald-50/60 dark:bg-emerald-950/30' : 'bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/80'}`}
                                                 >
-                                                    <span className="flex items-center gap-1">
-                                                        P/N {sparePartsSort === 'pn_az' ? '▲' : sparePartsSort === 'pn_za' ? '▼' : ''}
-                                                    </span>
-                                                </th>
-                                                <th className="px-4 py-3">Descripción</th>
-                                                <th 
-                                                    className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
-                                                    onClick={() => setSparePartsSort(s => s === 'cliente_az' ? 'newest' : 'cliente_az')}
-                                                    title="Ordenar por Cliente"
-                                                >
-                                                    <span className="flex items-center gap-1">
-                                                        Cliente {sparePartsSort === 'cliente_az' ? '▲' : ''}
-                                                    </span>
-                                                </th>
-                                                <th className="px-4 py-3 text-center">MOD</th>
-                                                <th className="px-4 py-3">Equipo</th>
-                                                <th className="px-4 py-3 text-center">Cant.</th>
-                                                <th className="px-4 py-3">Condición</th>
-                                                <th className="px-4 py-3 text-right">Precio (USD)</th>
-                                                <th 
-                                                    className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
-                                                    onClick={() => setSparePartsSort(s => s === 'ge_newest' ? 'ge_oldest' : 'ge_newest')}
-                                                    title="Ordenar por Orden GE"
-                                                >
-                                                    <span className="flex items-center gap-1">
-                                                        Orden GE {sparePartsSort === 'ge_newest' ? '▼' : sparePartsSort === 'ge_oldest' ? '▲' : ''}
-                                                    </span>
-                                                </th>
-                                                <th 
-                                                    className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
-                                                    onClick={() => setSparePartsSort(s => s === 'newest' ? 'oldest' : 'newest')}
-                                                    title="Ordenar por Fecha"
-                                                >
-                                                    <span className="flex items-center gap-1">
-                                                        F. Pedido {sparePartsSort === 'newest' ? '▼' : sparePartsSort === 'oldest' ? '▲' : ''}
-                                                    </span>
-                                                </th>
-                                                <th className="px-4 py-3">F. Instalación</th>
-                                                <th className="px-4 py-3 text-center">Origen</th>
-                                                {canManageSpareParts && (
-                                                    <th className="px-4 py-3 text-right">Acciones</th>
-                                                )}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                                            {paginatedSpareParts.map(sp => {
-                                                const linkedAsset = sp.asset_id ? assets.find(a => a.id === sp.asset_id) : undefined;
-                                                const isSelected = selectedSparePartIds.has(sp.id);
-                                                return (
-                                                    <tr key={sp.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group ${isSelected ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : ''}`}>
-                                                        <td className="w-10 px-3 py-3 text-center">
+                                                    {/* Header Tarjeta: Checkbox + PN + Precio */}
+                                                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                                                        <div className="flex items-center gap-2.5 min-w-0">
                                                             <input 
                                                                 type="checkbox" 
                                                                 checked={isSelected}
                                                                 onChange={(e) => {
                                                                     const next = new Set(selectedSparePartIds);
-                                                                    if (e.target.checked) {
-                                                                        next.add(sp.id);
-                                                                    } else {
-                                                                        next.delete(sp.id);
-                                                                    }
+                                                                    if (e.target.checked) next.add(sp.id);
+                                                                    else next.delete(sp.id);
                                                                     setSelectedSparePartIds(next);
                                                                 }}
-                                                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4 shrink-0"
                                                             />
-                                                        </td>
-                                                        <td className="px-4 py-3">
-                                                            <div className="flex flex-col">
-                                                                <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">{sp.pn || '—'}</span>
-                                                                {sp.fecha_egreso && (
-                                                                    <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 w-fit">
-                                                                        Egreso: {sp.fecha_egreso}
-                                                                    </span>
-                                                                )}
+                                                            <div className="min-w-0">
+                                                                <span className="font-mono font-black text-slate-900 dark:text-white text-sm tracking-tight block truncate">
+                                                                    {sp.pn || 'S/N'}
+                                                                </span>
                                                             </div>
-                                                        </td>
-                                                        <td className="px-4 py-3 max-w-[200px]">
-                                                            <span className="text-slate-700 dark:text-slate-300 line-clamp-2" title={sp.descripcion}>{sp.descripcion || '—'}</span>
-                                                        </td>
-                                                        <td className="px-4 py-3">
-                                                            <span className="text-slate-600 dark:text-slate-400 font-medium truncate max-w-[150px] block" title={sp.cliente}>{sp.cliente || '—'}</span>
-                                                        </td>
-                                                        <td className="px-4 py-3 text-center">
-                                                            <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
-                                                                {sp.mod || '—'}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-4 py-3">
-                                                            <span className="text-slate-500 dark:text-slate-400 truncate max-w-[120px] block" title={sp.equipo}>{sp.equipo || '—'}</span>
-                                                        </td>
-                                                        <td className="px-4 py-3 text-center">
-                                                            <span className="font-bold text-slate-800 dark:text-slate-200">{sp.cantidad ?? 1}</span>
-                                                        </td>
-                                                        <td className="px-4 py-3">
-                                                            {(() => {
-                                                                const condNorm = normalizeSparePartCondition(sp.condicion, sp.precio);
-                                                                return (
-                                                                    <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                                                        condNorm === 'CONTRATO DE SERVICIOS'
-                                                                            ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                                                                            : condNorm === 'GARANTÍAS'
-                                                                            ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-                                                                            : condNorm === 'DOA'
-                                                                            ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 border border-red-200 dark:border-red-800'
-                                                                            : condNorm === 'WRONG SHIPMENT'
-                                                                            ? 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border border-orange-200 dark:border-orange-800'
-                                                                            : condNorm === 'CONCESIÓN COMERCIAL'
-                                                                            ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
-                                                                            : condNorm === 'VENTAS'
-                                                                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                                                                            : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
-                                                                    }`}>
-                                                                        {condNorm}
-                                                                    </span>
-                                                                );
-                                                            })()}
-                                                        </td>
-                                                        <td className="px-4 py-3 text-right">
+                                                        </div>
+
+                                                        <div className="text-right shrink-0">
                                                             {sp.precio !== undefined ? (
-                                                                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-xs">
-                                                                    ${sp.precio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                <span className="font-mono font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                                                                    $${sp.precio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                                 </span>
                                                             ) : (
-                                                                <span className="text-slate-400 text-[10px]">—</span>
+                                                                <span className="text-slate-400 text-xs">—</span>
                                                             )}
-                                                        </td>
-                                                        <td className="px-4 py-3">
-                                                            <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">{sp.orden_ge || '—'}</span>
-                                                        </td>
-                                                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                                                            {formatSparePartDisplayDate(sp.fecha_pedido)}
-                                                        </td>
-                                                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                                                            {formatSparePartDisplayDate(sp.fecha_instalacion)}
-                                                        </td>
-                                                        <td className="px-4 py-3 text-center">
-                                                            <div className="flex flex-col items-center gap-1">
-                                                                <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                                                                    sp.source === 'CSV_IMPORT' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
-                                                                    : sp.source === 'SOLICITUD' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400'
-                                                                    : 'bg-slate-100 text-slate-500'
-                                                                }`}>
-                                                                    {sp.source === 'CSV_IMPORT' ? 'Excel' : sp.source === 'SOLICITUD' ? 'Solicitud' : 'Manual'}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Badges Condición, MOD, Cantidad, Egreso */}
+                                                    <div className="flex flex-wrap items-center gap-1.5 mb-2 pl-6">
+                                                        <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                                                            condNorm === 'CONTRATO DE SERVICIOS'
+                                                                ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                                                                : condNorm === 'GARANTÍAS'
+                                                                ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                                                                : condNorm === 'DOA'
+                                                                ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 border border-red-200 dark:border-red-800'
+                                                                : condNorm === 'WRONG SHIPMENT'
+                                                                ? 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border border-orange-200 dark:border-orange-800'
+                                                                : condNorm === 'CONCESIÓN COMERCIAL'
+                                                                ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                                                                : condNorm === 'VENTAS'
+                                                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                                                : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                                                        }`}>
+                                                            {condNorm}
+                                                        </span>
+                                                        {sp.mod && (
+                                                            <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
+                                                                MOD: {sp.mod}
+                                                            </span>
+                                                        )}
+                                                        <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                                                            Cant: {sp.cantidad ?? 1}
+                                                        </span>
+                                                        {sp.fecha_egreso && (
+                                                            <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300">
+                                                                Egreso: {sp.fecha_egreso}
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Descripción */}
+                                                    <p className="text-xs text-slate-700 dark:text-slate-300 line-clamp-2 mb-2 pl-6 font-medium">
+                                                        {sp.descripcion || 'Sin descripción'}
+                                                    </p>
+
+                                                    {/* Metadatos (Cliente, Equipo, Orden GE, F. Pedido) */}
+                                                    <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-lg mb-2.5 ml-6">
+                                                        <div className="truncate">
+                                                            <span className="text-[9px] font-bold text-slate-400 uppercase block">Cliente:</span>
+                                                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block" title={sp.cliente}>
+                                                                {sp.cliente || '—'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="truncate">
+                                                            <span className="text-[9px] font-bold text-slate-400 uppercase block">Equipo:</span>
+                                                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block" title={sp.equipo}>
+                                                                {sp.equipo || '—'}
+                                                            </span>
+                                                        </div>
+                                                        {sp.orden_ge && (
+                                                            <div className="truncate">
+                                                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Orden GE:</span>
+                                                                <span className="font-mono text-slate-700 dark:text-slate-300 truncate block">
+                                                                    {sp.orden_ge}
                                                                 </span>
-                                                                {linkedAsset && (
-                                                                    <button 
-                                                                        type="button"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            setSelectedAssetId(linkedAsset.id);
-                                                                            setActiveTab('LOGISTICS');
-                                                                        }}
-                                                                        title={`Ver en Logística: Estado ${linkedAsset.current_status}`}
-                                                                        className="text-[8px] font-black px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition-colors uppercase tracking-wider"
-                                                                    >
-                                                                        {linkedAsset.current_status === 'SOLICITADO' || linkedAsset.current_status === 'DRAFT' ? 'En Solicitud' :
-                                                                         linkedAsset.current_status === 'ORDERED' || linkedAsset.current_status === 'IN_TRANSIT' ? 'En Logística' :
-                                                                         linkedAsset.current_status === 'CUSTOMS' ? 'En Aduana' :
-                                                                         linkedAsset.current_status === 'RECEIVED_WH' ? 'En Bodega' :
-                                                                         linkedAsset.current_status === 'DISPATCHED' ? 'Despachado' : linkedAsset.current_status}
-                                                                    </button>
-                                                                )}
                                                             </div>
-                                                        </td>
+                                                        )}
+                                                        {sp.fecha_pedido && (
+                                                            <div className="truncate">
+                                                                <span className="text-[9px] font-bold text-slate-400 uppercase block">F. Pedido:</span>
+                                                                <span className="text-slate-700 dark:text-slate-300 truncate block">
+                                                                    {formatSparePartDisplayDate(sp.fecha_pedido)}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Acciones directas 1-tap en móvil */}
+                                                    <div className="flex items-center gap-1.5 pl-6">
+                                                        <button 
+                                                            type="button"
+                                                            onClick={() => {
+                                                                if (selectedSparePartIds.size > 0 && selectedSparePartIds.has(sp.id)) {
+                                                                    const selParts = spareParts.filter(p => selectedSparePartIds.has(p.id));
+                                                                    const firstClient = selParts.map(p => {
+                                                                        if (p.cliente && p.cliente.trim() !== '' && p.cliente.trim().toUpperCase() !== 'STOCK') return p.cliente.trim();
+                                                                        const a = p.asset_id ? assets.find(x => x.id === p.asset_id) : undefined;
+                                                                        if (a?.metadata?.cliente_final && a.metadata.cliente_final.trim().toUpperCase() !== 'STOCK') return a.metadata.cliente_final.trim();
+                                                                        return '';
+                                                                    }).find(c => Boolean(c)) || (sp.cliente || '');
+                                                                    const items = selParts.map(item => ({
+                                                                        codigo: item.pn || '',
+                                                                        cantidad: Number(item.cantidad) || 1,
+                                                                        descripcion: item.descripcion || '',
+                                                                        serial_number: '',
+                                                                        spare_part_id: item.id
+                                                                    }));
+                                                                    onOpenDigitalEgress('REPUESTOS', firstClient, items);
+                                                                } else {
+                                                                    onOpenDigitalEgress('REPUESTOS', sp.cliente || '', [{
+                                                                        codigo: sp.pn || '',
+                                                                        cantidad: Number(sp.cantidad) || 1,
+                                                                        descripcion: sp.descripcion || '',
+                                                                        serial_number: '',
+                                                                        spare_part_id: sp.id
+                                                                    }]);
+                                                                }
+                                                            }}
+                                                            className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs active:scale-95 transition-all"
+                                                        >
+                                                            <FileText size={13}/> Egreso Digital
+                                                        </button>
                                                         {canManageSpareParts && (
-                                                            <td className="px-4 py-3 text-right whitespace-nowrap">
-                                                                <div className="flex items-center justify-end gap-1">
-                                                                    <button 
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            if (selectedSparePartIds.size > 0) {
-    const selParts = spareParts.filter(p => selectedSparePartIds.has(p.id));
-    const firstClient = selParts.map(p => {
-      if (p.cliente && p.cliente.trim() !== '' && p.cliente.trim().toUpperCase() !== 'STOCK') return p.cliente.trim();
-      const a = p.asset_id ? assets.find(x => x.id === p.asset_id) : undefined;
-      if (a?.metadata?.cliente_final && a.metadata.cliente_final.trim().toUpperCase() !== 'STOCK') return a.metadata.cliente_final.trim();
-      return '';
-    }).find(c => Boolean(c)) || '';
-    const items = selParts.map(sp => ({
-      codigo: sp.pn || '',
-      cantidad: Number(sp.cantidad) || 1,
-      descripcion: sp.descripcion || '',
-      serial_number: '',
-      spare_part_id: sp.id
-    }));
-    onOpenDigitalEgress('REPUESTOS', firstClient, items);
-  } else {
-    onOpenDigitalEgress('REPUESTOS', '', []);
-  }
-                                                                        }} 
-                                                                        title="Generar Egreso Digital para este repuesto"
-                                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-all"
-                                                                    >
-                                                                        <FileText size={15}/>
-                                                                    </button>
-                                                                    <button 
-                                                                        type="button"
-                                                                        onClick={() => setEditingSparePart(sp)} 
-                                                                        title="Editar repuesto"
-                                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all"
-                                                                    >
-                                                                        <Edit3 size={15}/>
-                                                                    </button>
-                                                                    <button 
-                                                                        type="button"
-                                                                        onClick={() => handleDeleteSparePart(sp)} 
-                                                                        title="Eliminar repuesto"
-                                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-all"
-                                                                    >
-                                                                        <Trash2 size={15}/>
-                                                                    </button>
+                                                            <>
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={() => setEditingSparePart(sp)} 
+                                                                    className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-blue-600 transition-colors"
+                                                                    title="Editar repuesto"
+                                                                >
+                                                                    <Edit3 size={15}/>
+                                                                </button>
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={() => handleDeleteSparePart(sp)} 
+                                                                    className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-red-600 transition-colors"
+                                                                    title="Eliminar repuesto"
+                                                                >
+                                                                    <Trash2 size={15}/>
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                        {linkedAsset && (
+                                                            <button 
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setSelectedAssetId(linkedAsset.id);
+                                                                    setActiveTab('LOGISTICS');
+                                                                }}
+                                                                className="px-2.5 py-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-[10px] font-black uppercase"
+                                                                title="Ver en Logística"
+                                                            >
+                                                                Logística
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* ── VISTA ESCRITORIO: TABLA COMPLETA (hidden sm:block) ── */}
+                                    <div className="hidden sm:block overflow-x-auto">
+                                        <table className="w-full text-xs text-left min-w-[1100px]">
+                                            <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 uppercase font-black tracking-widest text-[10px] border-b border-slate-100 dark:border-slate-700 select-none">
+                                                <tr>
+                                                    <th className="w-10 px-3 py-3 text-center">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={paginatedSpareParts.length > 0 && paginatedSpareParts.every(sp => selectedSparePartIds.has(sp.id))}
+                                                            onChange={(e) => {
+                                                                const next = new Set(selectedSparePartIds);
+                                                                if (e.target.checked) {
+                                                                    paginatedSpareParts.forEach(sp => next.add(sp.id));
+                                                                } else {
+                                                                    paginatedSpareParts.forEach(sp => next.delete(sp.id));
+                                                                }
+                                                                setSelectedSparePartIds(next);
+                                                            }}
+                                                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                                            title="Seleccionar todos los de esta página"
+                                                        />
+                                                    </th>
+                                                    <th 
+                                                        className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
+                                                        onClick={() => setSparePartsSort(s => s === 'pn_az' ? 'pn_za' : 'pn_az')}
+                                                        title="Ordenar por P/N"
+                                                    >
+                                                        <span className="flex items-center gap-1">
+                                                            P/N {sparePartsSort === 'pn_az' ? '▲' : sparePartsSort === 'pn_za' ? '▼' : ''}
+                                                        </span>
+                                                    </th>
+                                                    <th className="px-4 py-3">Descripción</th>
+                                                    <th 
+                                                        className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
+                                                        onClick={() => setSparePartsSort(s => s === 'cliente_az' ? 'newest' : 'cliente_az')}
+                                                        title="Ordenar por Cliente"
+                                                    >
+                                                        <span className="flex items-center gap-1">
+                                                            Cliente {sparePartsSort === 'cliente_az' ? '▲' : ''}
+                                                        </span>
+                                                    </th>
+                                                    <th className="px-4 py-3 text-center">MOD</th>
+                                                    <th className="px-4 py-3">Equipo</th>
+                                                    <th className="px-4 py-3 text-center">Cant.</th>
+                                                    <th className="px-4 py-3">Condición</th>
+                                                    <th 
+                                                        className="px-4 py-3 text-right cursor-pointer hover:text-emerald-500 transition-colors select-none"
+                                                        onClick={() => setSparePartsSort(s => s === 'price_desc' ? 'price_asc' : 'price_desc')}
+                                                        title="Ordenar por Precio"
+                                                    >
+                                                        <span className="flex items-center justify-end gap-1">
+                                                            Precio (USD) {sparePartsSort === 'price_desc' ? '▼' : sparePartsSort === 'price_asc' ? '▲' : ''}
+                                                        </span>
+                                                    </th>
+                                                    <th 
+                                                        className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
+                                                        onClick={() => setSparePartsSort(s => s === 'ge_newest' ? 'ge_oldest' : 'ge_newest')}
+                                                        title="Ordenar por Orden GE"
+                                                    >
+                                                        <span className="flex items-center gap-1">
+                                                            Orden GE {sparePartsSort === 'ge_newest' ? '▼' : sparePartsSort === 'ge_oldest' ? '▲' : ''}
+                                                        </span>
+                                                    </th>
+                                                    <th 
+                                                        className="px-4 py-3 cursor-pointer hover:text-emerald-500 transition-colors"
+                                                        onClick={() => setSparePartsSort(s => s === 'newest' ? 'oldest' : 'newest')}
+                                                        title="Ordenar por Fecha"
+                                                    >
+                                                        <span className="flex items-center gap-1">
+                                                            F. Pedido {sparePartsSort === 'newest' ? '▼' : sparePartsSort === 'oldest' ? '▲' : ''}
+                                                        </span>
+                                                    </th>
+                                                    <th className="px-4 py-3">F. Instalación</th>
+                                                    <th className="px-4 py-3 text-center">Origen</th>
+                                                    {canManageSpareParts && (
+                                                        <th className="px-4 py-3 text-right">Acciones</th>
+                                                    )}
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                                                {paginatedSpareParts.map(sp => {
+                                                    const linkedAsset = sp.asset_id ? assets.find(a => a.id === sp.asset_id) : undefined;
+                                                    const isSelected = selectedSparePartIds.has(sp.id);
+                                                    return (
+                                                        <tr key={sp.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group ${isSelected ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : ''}`}>
+                                                            <td className="w-10 px-3 py-3 text-center">
+                                                                <input 
+                                                                    type="checkbox" 
+                                                                    checked={isSelected}
+                                                                    onChange={(e) => {
+                                                                        const next = new Set(selectedSparePartIds);
+                                                                        if (e.target.checked) {
+                                                                            next.add(sp.id);
+                                                                        } else {
+                                                                            next.delete(sp.id);
+                                                                        }
+                                                                        setSelectedSparePartIds(next);
+                                                                    }}
+                                                                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                                                />
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                <div className="flex flex-col">
+                                                                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">{sp.pn || '—'}</span>
+                                                                    {sp.fecha_egreso && (
+                                                                        <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 w-fit">
+                                                                            Egreso: {sp.fecha_egreso}
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                             </td>
-                                                        )}
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                )}
-                            </div>
+                                                            <td className="px-4 py-3 max-w-[200px]">
+                                                                <span className="text-slate-700 dark:text-slate-300 line-clamp-2" title={sp.descripcion}>{sp.descripcion || '—'}</span>
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                <span className="text-slate-600 dark:text-slate-400 font-medium truncate max-w-[150px] block" title={sp.cliente}>{sp.cliente || '—'}</span>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-center">
+                                                                <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
+                                                                    {sp.mod || '—'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                <span className="text-slate-500 dark:text-slate-400 truncate max-w-[120px] block" title={sp.equipo}>{sp.equipo || '—'}</span>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-center">
+                                                                <span className="font-bold text-slate-800 dark:text-slate-200">{sp.cantidad ?? 1}</span>
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                {(() => {
+                                                                    const condNorm = normalizeSparePartCondition(sp.condicion, sp.precio);
+                                                                    return (
+                                                                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                                                            condNorm === 'CONTRATO DE SERVICIOS'
+                                                                                ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                                                                                : condNorm === 'GARANTÍAS'
+                                                                                ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                                                                                : condNorm === 'DOA'
+                                                                                ? 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 border border-red-200 dark:border-red-800'
+                                                                                : condNorm === 'WRONG SHIPMENT'
+                                                                                ? 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border border-orange-200 dark:border-orange-800'
+                                                                                : condNorm === 'CONCESIÓN COMERCIAL'
+                                                                                ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                                                                                : condNorm === 'VENTAS'
+                                                                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                                                                : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                                                                        }`}>
+                                                                            {condNorm}
+                                                                        </span>
+                                                                    );
+                                                                })()}
+                                                            </td>
+                                                            <td className="px-4 py-3 text-right">
+                                                                {sp.precio !== undefined ? (
+                                                                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-xs">
+                                                                        $${sp.precio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-slate-400 text-[10px]">—</span>
+                                                                )}
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">{sp.orden_ge || '—'}</span>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                                                {formatSparePartDisplayDate(sp.fecha_pedido)}
+                                                            </td>
+                                                            <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                                                {formatSparePartDisplayDate(sp.fecha_instalacion)}
+                                                            </td>
+                                                            <td className="px-4 py-3 text-center">
+                                                                <div className="flex flex-col items-center gap-1">
+                                                                    <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                                                        sp.source === 'CSV_IMPORT' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
+                                                                        : sp.source === 'SOLICITUD' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400'
+                                                                        : 'bg-slate-100 text-slate-500'
+                                                                    }`}>
+                                                                        {sp.source === 'CSV_IMPORT' ? 'Excel' : sp.source === 'SOLICITUD' ? 'Solicitud' : 'Manual'}
+                                                                    </span>
+                                                                    {linkedAsset && (
+                                                                        <button 
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                setSelectedAssetId(linkedAsset.id);
+                                                                                setActiveTab('LOGISTICS');
+                                                                            }}
+                                                                            title={`Ver en Logística: Estado ${linkedAsset.current_status}`}
+                                                                            className="text-[8px] font-black px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition-colors uppercase tracking-wider"
+                                                                        >
+                                                                            {linkedAsset.current_status === 'SOLICITADO' || linkedAsset.current_status === 'DRAFT' ? 'En Solicitud' :
+                                                                             linkedAsset.current_status === 'ORDERED' || linkedAsset.current_status === 'IN_TRANSIT' ? 'En Logística' :
+                                                                             linkedAsset.current_status === 'CUSTOMS' ? 'En Aduana' :
+                                                                             linkedAsset.current_status === 'RECEIVED_WH' ? 'En Bodega' :
+                                                                             linkedAsset.current_status === 'DISPATCHED' ? 'Despachado' : linkedAsset.current_status}
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </td>
+                                                            {canManageSpareParts && (
+                                                                <td className="px-4 py-3 text-right whitespace-nowrap">
+                                                                    <div className="flex items-center justify-end gap-1">
+                                                                        <button 
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                if (selectedSparePartIds.size > 0 && selectedSparePartIds.has(sp.id)) {
+                                                                                    const selParts = spareParts.filter(p => selectedSparePartIds.has(p.id));
+                                                                                    const firstClient = selParts.map(p => {
+                                                                                        if (p.cliente && p.cliente.trim() !== '' && p.cliente.trim().toUpperCase() !== 'STOCK') return p.cliente.trim();
+                                                                                        const a = p.asset_id ? assets.find(x => x.id === p.asset_id) : undefined;
+                                                                                        if (a?.metadata?.cliente_final && a.metadata.cliente_final.trim().toUpperCase() !== 'STOCK') return a.metadata.cliente_final.trim();
+                                                                                        return '';
+                                                                                    }).find(c => Boolean(c)) || (sp.cliente || '');
+                                                                                    const items = selParts.map(item => ({
+                                                                                        codigo: item.pn || '',
+                                                                                        cantidad: Number(item.cantidad) || 1,
+                                                                                        descripcion: item.descripcion || '',
+                                                                                        serial_number: '',
+                                                                                        spare_part_id: item.id
+                                                                                    }));
+                                                                                    onOpenDigitalEgress('REPUESTOS', firstClient, items);
+                                                                                } else {
+                                                                                    onOpenDigitalEgress('REPUESTOS', sp.cliente || '', [{
+                                                                                        codigo: sp.pn || '',
+                                                                                        cantidad: Number(sp.cantidad) || 1,
+                                                                                        descripcion: sp.descripcion || '',
+                                                                                        serial_number: '',
+                                                                                        spare_part_id: sp.id
+                                                                                    }]);
+                                                                                }
+                                                                            }} 
+                                                                            title="Generar Egreso Digital para este repuesto"
+                                                                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-all"
+                                                                        >
+                                                                            <FileText size={15}/>
+                                                                        </button>
+                                                                        <button 
+                                                                            type="button"
+                                                                            onClick={() => setEditingSparePart(sp)} 
+                                                                            title="Editar repuesto"
+                                                                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all"
+                                                                        >
+                                                                            <Edit3 size={15}/>
+                                                                        </button>
+                                                                        <button 
+                                                                            type="button"
+                                                                            onClick={() => handleDeleteSparePart(sp)} 
+                                                                            title="Eliminar repuesto"
+                                                                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-all"
+                                                                        >
+                                                                            <Trash2 size={15}/>
+                                                                        </button>
+                                                                    </div>
+                                                                </td>
+                                                            )}
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </>
+                            )}
 
-                            {/* Footer con Paginación de Alto Rendimiento */}
+                        {/* Footer con Paginación de Alto Rendimiento */}
                             {filteredSpareParts.length > 0 && (
                                 <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-800/50">
                                     <div className="flex items-center gap-3">
