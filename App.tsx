@@ -401,14 +401,14 @@ const NavButton = ({ active, onClick, icon, label, disabled, mobileMode = false 
             <button
                 onClick={onClick}
                 disabled={disabled}
-                className={`flex flex-col items-center justify-center w-full py-3 transition-colors ${
-                  active ? 'text-slate-900 dark:text-white font-bold' : 'text-slate-400 dark:text-slate-500'
+                className={`flex flex-col items-center justify-center flex-1 min-w-[46px] py-1.5 px-0.5 transition-colors ${
+                  active ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-400 dark:text-slate-500'
                 } ${disabled ? 'opacity-30' : ''}`}
             >
-                <div className={`${active ? 'bg-slate-200 dark:bg-slate-800 p-1.5 rounded-full mb-1' : 'mb-1'}`}>
-                    {React.cloneElement(icon as React.ReactElement<any>, { size: 20 })}
+                <div className={`${active ? 'bg-blue-50 dark:bg-blue-950/60 p-1 rounded-xl mb-0.5' : 'mb-0.5'}`}>
+                    {React.cloneElement(icon as React.ReactElement<any>, { size: 19 })}
                 </div>
-                <span className="text-[10px] font-medium truncate max-w-full px-1">{label}</span>
+                <span className="text-[9px] font-semibold truncate max-w-full leading-tight">{label}</span>
             </button>
         );
     }
@@ -1034,8 +1034,8 @@ export default function App() {
                 {!logoError ? ( 
                     <img 
                         src="/inicio.png" 
-                        alt="Logo" 
-                        className="h-6 md:h-8 w-auto object-contain" 
+                        alt="OmniTrace Logo" 
+                        className="h-7 md:h-9 w-auto object-contain rounded-lg shadow-sm border border-slate-700/50" 
                         onError={(e) => {
                             const target = e.target as HTMLImageElement;
                             if (target.src.includes('inicio.png')) {
@@ -1288,7 +1288,7 @@ export default function App() {
             )}
         </main>
         
-        <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-around items-center h-16 z-50 shadow-[0_-2px_20px_rgba(0,0,0,0.1)] pb-safe rounded-t-3xl">
+        <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between overflow-x-auto scrollbar-none h-16 z-50 shadow-[0_-2px_20px_rgba(0,0,0,0.1)] pb-safe rounded-t-2xl px-1">
             <NavButton mobileMode active={activeTab==='DASHBOARD'} onClick={()=>setActiveTab('DASHBOARD')} icon={<LayoutDashboard />} label="Dash" />
             <NavButton mobileMode active={activeTab==='REQUEST'} onClick={()=>{setActiveTab('REQUEST'); setRequestMode('MENU');}} icon={<Plus />} label="Nuevo" disabled={!canCreateRequest}/>
             <NavButton mobileMode active={activeTab==='LOGISTICS'} onClick={()=>setActiveTab('LOGISTICS')} icon={<Truck />} label="Logist" disabled={!canViewLogistics} />
@@ -1296,6 +1296,10 @@ export default function App() {
             <NavButton mobileMode active={activeTab==='WAREHOUSE'} onClick={()=>setActiveTab('WAREHOUSE')} icon={<Warehouse />} label="Bodega" />
             <NavButton mobileMode active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode />} label="Audit" />
             <NavButton mobileMode active={activeTab==='RETURNS'} onClick={()=>setActiveTab('RETURNS')} icon={<RotateCcw />} label="Retornos" />
+            <NavButton mobileMode active={activeTab==='SPAREPARTS'} onClick={()=>setActiveTab('SPAREPARTS')} icon={<Package />} label="Repuestos" />
+            {isAdmin && (
+              <NavButton mobileMode active={activeTab==='ADMIN'} onClick={()=>setActiveTab('ADMIN')} icon={<Shield />} label="Admin" />
+            )}
         </nav>
       </div>
 
