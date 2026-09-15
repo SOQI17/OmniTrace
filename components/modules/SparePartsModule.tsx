@@ -85,7 +85,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
   const [sparePartsFilterMod, setSparePartsFilterMod] = useState('');
   const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
   const [sparePartsFilterOrigen, setSparePartsFilterOrigen] = useState('');
-  const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az' | 'price_desc' | 'price_asc'>('newest');
+  const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az' | 'price_desc' | 'price_asc'>('ge_newest');
   const [showSparePartModal, setShowSparePartModal] = useState(false);
   const [editingSparePart, setEditingSparePart] = useState<SparePart | null>(null);
   const [csvImporting, setCsvImporting] = useState(false);
@@ -99,7 +99,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
     (sparePartsFilterMod ? 1 : 0) + 
     (sparePartsFilterCondicion ? 1 : 0) + 
     (sparePartsFilterOrigen ? 1 : 0) + 
-    (sparePartsSort !== 'newest' ? 1 : 0);
+    (sparePartsSort !== 'ge_newest' ? 1 : 0);
 
 
   const [sparePartsPage, setSparePartsPage] = useState(1);
@@ -215,10 +215,16 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
           return parseDateValue(b) - parseDateValue(a);
         case 'oldest':
           return parseDateValue(a) - parseDateValue(b);
-        case 'ge_newest':
-          return (b.orden_ge || '').localeCompare(a.orden_ge || '', undefined, { numeric: true, sensitivity: 'base' });
-        case 'ge_oldest':
-          return (a.orden_ge || '').localeCompare(b.orden_ge || '', undefined, { numeric: true, sensitivity: 'base' });
+        case 'ge_newest': {
+          const cmp = (b.orden_ge || '').localeCompare(a.orden_ge || '', undefined, { numeric: true, sensitivity: 'base' });
+          if (cmp !== 0) return cmp;
+          return parseDateValue(b) - parseDateValue(a);
+        }
+        case 'ge_oldest': {
+          const cmp = (a.orden_ge || '').localeCompare(b.orden_ge || '', undefined, { numeric: true, sensitivity: 'base' });
+          if (cmp !== 0) return cmp;
+          return parseDateValue(a) - parseDateValue(b);
+        }
         case 'pn_az':
           return (a.pn || '').localeCompare(b.pn || '');
         case 'pn_za':
@@ -1252,7 +1258,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                             { value: 'CSV_IMPORT', label: 'Origen: Excel / CSV' },
                                             { value: 'MANUAL', label: 'Origen: Manual' }
                                         ]} />
-                                    {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsFilterOrigen || sparePartsSort !== 'newest') && (
+                                    {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsFilterOrigen || sparePartsSort !== 'ge_newest') && (
                                         <button onClick={() => { 
                                             setSparePartsSearch(''); 
                                             setSparePartsDebouncedSearch(''); 
@@ -1262,7 +1268,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                             setSparePartsFilterMod(''); 
                                             setSparePartsFilterCondicion(''); 
                                             setSparePartsFilterOrigen(''); 
-                                            setSparePartsSort('newest'); 
+                                            setSparePartsSort('ge_newest'); 
                                             setSparePartsPage(1);
                                         }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-red-500 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
