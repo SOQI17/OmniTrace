@@ -17,6 +17,97 @@ export enum AssetCondition {
   FOI = 'FOI'
 }
 
+export const STANDARD_MODALITIES = [
+  'MR',
+  'MG',
+  'CT',
+  'BMD',
+  'Surgery',
+  'RX',
+  'PETCT',
+  'Cyclotron',
+  'MS',
+  'IGM',
+  'NM',
+  'AW',
+  'IMP',
+  'DIG',
+  'US',
+  'Aplicaciones',
+  'IT'
+] as const;
+
+export type StandardModality = typeof STANDARD_MODALITIES[number];
+
+export const normalizeOrInferModality = (rawMod?: string, rawEquipo?: string): string => {
+  const m = (rawMod || '').trim();
+  const eq = (rawEquipo || '').trim();
+  if (!m && !eq) return '';
+
+  const directMatch = STANDARD_MODALITIES.find(
+    std => std.toUpperCase() === m.toUpperCase()
+  );
+  if (directMatch) return directMatch;
+
+  if (m.toUpperCase() === 'XR') return 'RX';
+
+  const combined = `${m} ${eq}`.toUpperCase();
+
+  if (combined.includes('REVOLUTION') || combined.includes('EVO') || combined.includes('LIGHTSPEED') || combined.includes('BRIGHTSPEED') || combined.includes('TOMOGRAFO') || combined.includes('TOMÓGRAFO') || combined.includes('TOMOGRAFIA') || combined.includes('TOMOGRAFÍA') || /\bCT\b/.test(combined)) {
+    return 'CT';
+  }
+  if (combined.includes('DEFINIUM') || combined.includes('XR5000') || combined.includes('XR') || combined.includes('PROTEUS') || combined.includes('BRIVO XR') || combined.includes('RAYOS') || combined.includes('X-RAY') || /\bRX\b/.test(combined)) {
+    return 'RX';
+  }
+  if (combined.includes('SIGNA') || combined.includes('RESONADOR') || combined.includes('RESONANCIA') || combined.includes('EXPLORER') || combined.includes('HDXT') || /\bMR\b/.test(combined) || /\bMRI\b/.test(combined)) {
+    return 'MR';
+  }
+  if (combined.includes('PRISTINA') || combined.includes('SENOGRAPHE') || combined.includes('MAMMO') || combined.includes('MAMÓGRAFO') || combined.includes('MAMOGRAFO') || /\bMG\b/.test(combined)) {
+    return 'MG';
+  }
+  if (combined.includes('OEC') || combined.includes('SURGERY') || combined.includes('QUIRURGICO') || combined.includes('QUIRÚRGICO') || combined.includes('ARCO EN C')) {
+    return 'Surgery';
+  }
+  if (combined.includes('PET') || combined.includes('PETCT') || combined.includes('PET/CT')) {
+    return 'PETCT';
+  }
+  if (combined.includes('CYCLOTRON') || combined.includes('CICLOTRON') || combined.includes('CICLOTRÓN') || combined.includes('PETTRACE')) {
+    return 'Cyclotron';
+  }
+  if (combined.includes('INNOVA') || combined.includes('IGS') || combined.includes('HEMODINAMIA') || combined.includes('ANGIOGRAFO') || combined.includes('ANGIÓGRAFO') || /\bIGM\b/.test(combined)) {
+    return 'IGM';
+  }
+  if (combined.includes('INFINIA') || combined.includes('VENTRI') || combined.includes('GAMMA') || /\bNM\b/.test(combined)) {
+    return 'NM';
+  }
+  if (combined.includes('LOGIQ') || combined.includes('VIVID') || combined.includes('VOLUSON') || combined.includes('VERSANA') || combined.includes('ECOGRAFO') || combined.includes('ECÓGRAFO') || combined.includes('ULTRASONIDO') || /\bUS\b/.test(combined)) {
+    return 'US';
+  }
+  if (combined.includes('LUNAR') || combined.includes('PRODIGY') || combined.includes('DENSITO') || /\bBMD\b/.test(combined)) {
+    return 'BMD';
+  }
+  if (combined.includes('WORKSTATION') || /\bAW\b/.test(combined)) {
+    return 'AW';
+  }
+  if (combined.includes('DRYPIX') || combined.includes('DRYSTAR') || combined.includes('IMPRESORA') || /\bIMP\b/.test(combined)) {
+    return 'IMP';
+  }
+  if (combined.includes('DIGITALIZADOR') || /\bDIG\b/.test(combined) || /\bCR\b/.test(combined)) {
+    return 'DIG';
+  }
+  if (combined.includes('APLICACION') || combined.includes('APLICACIÓN') || combined.includes('APLICACIONES') || combined.includes('LICENCIA')) {
+    return 'Aplicaciones';
+  }
+  if (combined.includes('SERVER') || combined.includes('PACS') || combined.includes('RED') || /\bIT\b/.test(combined)) {
+    return 'IT';
+  }
+  if (/\bMS\b/.test(combined)) {
+    return 'MS';
+  }
+
+  return m;
+};
+
 export interface SupplierInvoice {
   proveedor: string;
   no_factura: string;
@@ -67,6 +158,7 @@ export interface AssetMetadata {
   provider: string; // Proveedor (ej. GE, SIEMENS)
   cliente_final: string;
   equipo_destino: string;
+  mod?: string; // Modalidad (ej. CT, MR, MG, RX, etc.)
   condicion: AssetCondition; // Usado como Tipo de Importacion
   numero_orden_ge: string; // Usado como No Pedido
   cantidad: number;

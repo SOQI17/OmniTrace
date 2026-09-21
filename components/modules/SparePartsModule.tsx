@@ -6,7 +6,9 @@ import {
   AssetStatus, 
   User, 
   SparePart,
-  DigitalEgressItem
+  DigitalEgressItem,
+  STANDARD_MODALITIES,
+  normalizeOrInferModality
 } from '../../types';
 import { db } from '../../firebase';
 import {
@@ -176,7 +178,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
       const matchMes = !sparePartsFilterMes || dp.mes === sparePartsFilterMes;
       const matchDia = !sparePartsFilterDia || dp.dia === sparePartsFilterDia;
 
-      const matchMod = !sparePartsFilterMod || sp.mod === sparePartsFilterMod;
+      const matchMod = !sparePartsFilterMod || (normalizeOrInferModality(sp.mod, sp.equipo) || sp.mod) === sparePartsFilterMod;
       const matchCondicion = !sparePartsFilterCondicion || normalizeSparePartCondition(sp.condicion, sp.precio) === sparePartsFilterCondicion;
       const matchOrigen = !sparePartsFilterOrigen || sp.source === sparePartsFilterOrigen;
       return matchSearch && matchAnio && matchMes && matchDia && matchMod && matchCondicion && matchOrigen;
@@ -287,8 +289,8 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
       rData.inversion += inv;
       repuestoMap.set(pnKey, rData);
 
-      const rawMod = (sp.mod || '').trim();
-      const modKey = rawMod ? rawMod.toUpperCase() : 'OTROS';
+      const cleanMod = normalizeOrInferModality(sp.mod, sp.equipo) || (sp.mod || '').trim();
+      const modKey = cleanMod ? cleanMod.toUpperCase() : 'OTROS';
       modMap.set(modKey, (modMap.get(modKey) || 0) + cant);
 
       const rawEq = (sp.equipo || '').trim();
@@ -398,7 +400,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
   }, [spareParts, sparePartsFilterAnio, sparePartsFilterMes]);
 
   const uniqueClientes = useMemo(() => [...new Set(spareParts.map(sp => sp.cliente).filter(Boolean))], [spareParts]);
-  const uniqueMods = useMemo(() => [...new Set(spareParts.map(sp => sp.mod).filter(Boolean))], [spareParts]);
+  const uniqueMods = useMemo(() => [...new Set(spareParts.map(sp => normalizeOrInferModality(sp.mod, sp.equipo) || sp.mod).filter(Boolean))].sort(), [spareParts]);
   const uniqueCondiciones = useMemo(() => {
     const set = new Set<string>();
     spareParts.forEach(sp => {
@@ -513,7 +515,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                 descripcion: String(row['DESCRIPCIÓN'] || row['DESCRIPCION'] || row['Descripción'] || '').trim(),
                                 cantidad:    Number(row['CANTIDAD'] || row['Cantidad'] || 1),
                                 cliente:     String(row['CLIENTE'] || row['Cliente'] || '').trim(),
-                                mod:         String(row['MOD'] || row['Mod'] || '').trim(),
+                                mod:         normalizeOrInferModality(String(row['MOD'] || row['Mod'] || '').trim(), String(row['Equipo'] || row['EQUIPO'] || '').trim()) || String(row['MOD'] || row['Mod'] || '').trim(),
                                 equipo:      String(row['Equipo'] || row['EQUIPO'] || '').trim(),
                                 workflow_id: String(row['WF'] || row['Wf'] || '').trim(),
                                 orden_ge:    String(row['ORDEN'] || row['Orden'] || '').trim(),
@@ -568,23 +570,27 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                     }
                 };
 
-                // ── Agrupar y normalizar condiciones en base de datos (Admin / Alexis) ──
+                // ── Agrupar y normalizar condiciones y modalidades MOD en base de datos (Admin / Alexis) ──
                 const handleBatchNormalizeConditions = async () => {
                     if (!canManageSpareParts || spareParts.length === 0 || !currentUser) return;
 
                     const needsUpdate = spareParts.filter(sp => {
-                        const normalized = normalizeSparePartCondition(sp.condicion, sp.precio);
-                        return sp.condicion !== normalized;
+                        const normalizedCond = normalizeSparePartCondition(sp.condicion, sp.precio);
+                        const normalizedMod = normalizeOrInferModality(sp.mod, sp.equipo);
+                        const condNeeds = sp.condicion !== normalizedCond;
+                        const modNeeds = !!normalizedMod && sp.mod !== normalizedMod;
+                        return condNeeds || modNeeds;
                     });
 
                     if (needsUpdate.length === 0) {
-                        showToast('Todas las condiciones de los repuestos ya se encuentran agrupadas y normalizadas.', 'info', 4000);
+                        showToast('Todas las condiciones y modalidades MOD de los repuestos ya se encuentran agrupadas y normalizadas.', 'info', 4000);
                         return;
                     }
 
                     const confirmed = await showConfirm(
-                        `¿Deseas agrupar y actualizar ${needsUpdate.length} repuestos a las categorías estándar?\n\n` +
-                        `• CONTRATO DE SERVICIOS\n• GARANTÍAS\n• DOA\n• WRONG SHIPMENT\n• CONCESIÓN COMERCIAL\n• VENTAS\n\n` +
+                        `¿Deseas agrupar y actualizar ${needsUpdate.length} repuestos a los estándares de OMNITRACE?\n\n` +
+                        `• Condiciones: CONTRATO DE SERVICIOS, GARANTÍAS, DOA, WRONG SHIPMENT, CONCESIÓN COMERCIAL, VENTAS\n` +
+                        `• Modalidad (MOD): Asignación automática de siglas de modalidad (CT, MR, RX, MG, US, etc.) separadas del modelo de equipo.\n\n` +
                         `Esta acción actualizará los registros directamente en la base de datos.`
                     );
                     if (!confirmed) return;
@@ -597,16 +603,20 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                             const batch = writeBatch(db);
                             chunk.forEach(sp => {
                                 const targetCond = normalizeSparePartCondition(sp.condicion, sp.precio);
-                                batch.update(doc(db, 'spare_parts', sp.id), {
-                                    condicion: targetCond
-                                });
+                                const targetMod = normalizeOrInferModality(sp.mod, sp.equipo);
+                                const updates: any = {};
+                                if (sp.condicion !== targetCond) updates.condicion = targetCond;
+                                if (targetMod && sp.mod !== targetMod) updates.mod = targetMod;
+                                if (Object.keys(updates).length > 0) {
+                                    batch.update(doc(db, 'spare_parts', sp.id), updates);
+                                }
                             });
                             await batch.commit();
                             updatedCount += chunk.length;
                         }
-                        showToast(`✅ ${updatedCount} repuestos agrupados y normalizados con éxito.`, 'success', 5000);
+                        showToast(`✅ ${updatedCount} repuestos normalizados (condiciones y modalidades) con éxito.`, 'success', 5000);
                     } catch (err: any) {
-                        showError(`Error al normalizar condiciones: ${err.message}`);
+                        showError(`Error al normalizar: ${err.message}`);
                     }
                 };
 
@@ -650,7 +660,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                         cantidad: Number(fd.get('cantidad')) || 1,
                         descripcion: (fd.get('descripcion') as string || '').trim(),
                         cliente: (fd.get('cliente') as string || '').trim(),
-                        mod: (fd.get('mod') as string || '').trim(),
+                        mod: normalizeOrInferModality((fd.get('mod') as string || '').trim(), (fd.get('equipo') as string || '').trim()) || ((fd.get('mod') as string || '').trim()),
                         equipo: (fd.get('equipo') as string || '').trim(),
                         condicion: normalizeSparePartCondition((fd.get('condicion') as string || '').trim(), numPrecio),
                         orden_ge: (fd.get('orden_ge') as string || '').trim(),
@@ -717,7 +727,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                 descripcion: a.metadata.description || '',
                                 cantidad: a.metadata.cantidad || 1,
                                 cliente: a.metadata.cliente_final || '',
-                                mod: a.metadata.equipo_destino || '',
+                                mod: a.metadata.mod || normalizeOrInferModality('', a.metadata.equipo_destino) || '',
                                 equipo: a.metadata.equipo_destino || '',
                                 workflow_id: a.metadata.workflow_id || '',
                                 orden_ge: a.metadata.numero_orden_ge || '',
@@ -1387,11 +1397,14 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                         }`}>
                                                             {condNorm}
                                                         </span>
-                                                        {sp.mod && (
-                                                            <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
-                                                                MOD: {sp.mod}
-                                                            </span>
-                                                        )}
+                                                        {(() => {
+                                                            const displayMod = normalizeOrInferModality(sp.mod, sp.equipo) || sp.mod;
+                                                            return displayMod ? (
+                                                                <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
+                                                                    MOD: {displayMod}
+                                                                </span>
+                                                            ) : null;
+                                                        })()}
                                                         <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                                                             Cant: {sp.cantidad ?? 1}
                                                         </span>
@@ -1632,7 +1645,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                             </td>
                                                             <td className="px-4 py-3 text-center">
                                                                 <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase">
-                                                                    {sp.mod || '—'}
+                                                                    {normalizeOrInferModality(sp.mod, sp.equipo) || sp.mod || '—'}
                                                                 </span>
                                                             </td>
                                                             <td className="px-4 py-3">
@@ -2404,7 +2417,10 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                         </div>
                                         <div>
                                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">MOD (Modalidad)</label>
-                                            <input name="mod" defaultValue={editingSparePart.mod} placeholder="CT, MR, XR..." className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" />
+                                            <input name="mod" defaultValue={normalizeOrInferModality(editingSparePart.mod, editingSparePart.equipo) || editingSparePart.mod} placeholder="CT, MR, RX, MG..." className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-400 outline-none" list="modalities-datalist" />
+                                            <datalist id="modalities-datalist">
+                                                {STANDARD_MODALITIES.map(m => <option key={m} value={m} />)}
+                                            </datalist>
                                         </div>
                                         <div>
                                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">Equipo / Modelo</label>

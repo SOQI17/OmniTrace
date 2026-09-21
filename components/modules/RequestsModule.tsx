@@ -4,7 +4,9 @@ import {
   AssetCondition, 
   AssetStatus, 
   RequestDraftItem, 
-  User 
+  User,
+  STANDARD_MODALITIES,
+  normalizeOrInferModality
 } from '../../types';
 import { db } from '../../firebase';
 import { doc, writeBatch } from 'firebase/firestore';
@@ -32,6 +34,7 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
 }) => {
   const [requestMode, setRequestMode] = useState<'MENU' | 'PARTS' | 'EQUIPMENT' | 'TOOLS'>('MENU');
   const [requestItems, setRequestItems] = useState<RequestDraftItem[]>([]);
+  const [selectedMod, setSelectedMod] = useState('');
   const [reqPn, setReqPn] = useState('');
   const [reqDesc, setReqDesc] = useState('');
   const [reqQty, setReqQty] = useState(1);
@@ -63,10 +66,13 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
     const fechaPedidoFormatted = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
     const mesNombre = now.toLocaleString('es-ES', { month: 'long' });
     const capitalizedMes = mesNombre.charAt(0).toUpperCase() + mesNombre.slice(1);
+    const rawMod = ((formData.get('mod') as string) || selectedMod || '').trim();
+    const rawEquipo = ((formData.get('equipo_destino') as string) || '').trim();
+    const finalMod = normalizeOrInferModality(rawMod, rawEquipo);
 
     requestItems.forEach(item => {
       const id = generateUUID();
-      const asset: Asset = { 
+      const asset: Asset = {
         id, 
         current_status: AssetStatus.DRAFT, 
         lifecycle_lock: false, 
@@ -74,7 +80,8 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
           workflow_id: formData.get('workflow_id') as string, 
           provider: formData.get('provider') as string, 
           cliente_final: formData.get('cliente_final') as string, 
-          equipo_destino: formData.get('equipo_destino') as string, 
+          equipo_destino: rawEquipo, 
+          mod: finalMod,
           condicion: formData.get('condicion') as AssetCondition, 
           numero_orden_ge: formData.get('numero_orden_ge') as string, 
           fecha_solicitud: new Date().toISOString(), 
@@ -97,8 +104,8 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
         descripcion: item.description,
         cantidad: item.cantidad,
         cliente: (formData.get('cliente_final') as string) || '',
-        mod: (formData.get('equipo_destino') as string) || '',
-        equipo: (formData.get('equipo_destino') as string) || '',
+        mod: finalMod,
+        equipo: rawEquipo,
         workflow_id: (formData.get('workflow_id') as string) || '',
         orden_ge: (formData.get('numero_orden_ge') as string) || '',
         condicion: normalizeSparePartCondition((formData.get('condicion') as string) || '', item.cost ? Number(item.cost) : undefined),
@@ -125,6 +132,7 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
     await batch.commit();
     showToast('Solicitud creada y registrada en Repuestos.', 'success');
     setRequestItems([]);
+    setSelectedMod('');
     setRequestMode('MENU');
     onSuccessNavigate();
   };
@@ -258,12 +266,48 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
                 <EditableField label="Orden GE" name="numero_orden_ge" disabled={!canCreateRequest}/>
                 <EditableField label="Proveedor" name="provider" disabled={!canCreateRequest}/>
                 <EditableField label="Cliente Final" name="cliente_final" disabled={!canCreateRequest}/>
-                <EditableField label="Equipo Destino" name="equipo_destino" disabled={!canCreateRequest}/>
                 <div className="flex flex-col">
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">Modalidad (MOD)</label>
+                  <input 
+                    name="mod" 
+                    value={selectedMod} 
+                    onChange={e => setSelectedMod(e.target.value)} 
+                    placeholder="Ej. CT, MR, MG, RX..." 
+                    disabled={!canCreateRequest} 
+                    className="border border-slate-300 dark:border-slate-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-slate-200 outline-none disabled:bg-slate-100 dark:disabled:bg-slate-800 dark:bg-slate-700 dark:text-white font-semibold" 
+                  />
+                </div>
+                <EditableField label="Equipo Destino" name="equipo_destino" disabled={!canCreateRequest}/>
+                <div className="flex flex-col md:col-span-2">
                   <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">Condición</label>
                   <select name="condicion" className="border border-slate-300 dark:border-slate-600 rounded-lg p-3 text-sm bg-white dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-slate-200 outline-none" disabled={!canCreateRequest}>
                     {Object.values(AssetCondition).map(c=><option key={c} value={c}>{c}</option>)}
                   </select>
+                </div>
+                <div className="md:col-span-2 pt-1">
+                  <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 block">
+                    Selección Rápida de Modalidad (MOD):
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {STANDARD_MODALITIES.map(modItem => {
+                      const isSelected = selectedMod.toUpperCase() === modItem.toUpperCase();
+                      return (
+                        <button
+                          key={modItem}
+                          type="button"
+                          disabled={!canCreateRequest}
+                          onClick={() => setSelectedMod(modItem)}
+                          className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all border ${
+                            isSelected
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-600 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400'
+                          }`}
+                        >
+                          + {modItem}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
