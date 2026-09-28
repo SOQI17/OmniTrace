@@ -778,49 +778,57 @@ export default function App() {
 
       // 2. Si proviene de REPUESTOS, actualizar fecha_egreso en spare_parts
       if (egress.origen === 'REPUESTOS') {
-        const batch = writeBatch(db);
-        let count = 0;
-        egress.items.forEach(it => {
-          if (it.spare_part_id) {
-            batch.update(doc(db, 'spare_parts', it.spare_part_id), {
-              fecha_egreso: fechaEgresoStr
-            });
-            count++;
+        try {
+          const batch = writeBatch(db);
+          let count = 0;
+          egress.items.forEach(it => {
+            if (it.spare_part_id) {
+              batch.update(doc(db, 'spare_parts', it.spare_part_id), {
+                fecha_egreso: fechaEgresoStr
+              });
+              count++;
+            }
+          });
+          if (count > 0) {
+            await batch.commit();
           }
-        });
-        if (count > 0) {
-          await batch.commit();
+          setSelectedSparePartIds(new Set());
+        } catch (spErr) {
+          console.warn('Advertencia al actualizar spare_parts:', spErr);
         }
-        setSelectedSparePartIds(new Set());
       }
 
       // 3. Si proviene de BODEGA, actualizar custodio/despacho en los activos
       if (egress.origen === 'BODEGA') {
-        for (const it of egress.items) {
-          const matchingAssets = assets.filter(
-            a => a.metadata.pn === it.codigo && a.current_status === AssetStatus.RECEIVED_WH
-          );
-          let remaining = it.cantidad;
-          for (const a of matchingAssets) {
-            if (remaining <= 0) break;
-            const inStock = a.metadata.cantidad || 1;
-            const updated = AssetLifecycleService.updateField(
-              a,
-              'warehouse',
-              { 
-                responsable_egreso: egress.responsable, 
-                destino_final: egress.cliente, 
-                motivo_salida: `Egreso Digital #${egress.numero}` 
-              },
-              currentUser
-            ).updatedAsset;
+        try {
+          for (const it of egress.items) {
+            const matchingAssets = assets.filter(
+              a => a.metadata.pn === it.codigo && a.current_status === AssetStatus.RECEIVED_WH
+            );
+            let remaining = it.cantidad;
+            for (const a of matchingAssets) {
+              if (remaining <= 0) break;
+              const inStock = a.metadata.cantidad || 1;
+              const updated = AssetLifecycleService.updateField(
+                a,
+                'warehouse',
+                { 
+                  responsable_egreso: egress.responsable, 
+                  destino_final: egress.cliente, 
+                  motivo_salida: `Egreso Digital #${egress.numero}` 
+                },
+                currentUser
+              ).updatedAsset;
 
-            await updateDoc(doc(db, 'assets', a.id), {
-              current_status: AssetStatus.DISPATCHED,
-              warehouse: updated.warehouse
-            });
-            remaining -= inStock;
+              await updateDoc(doc(db, 'assets', a.id), {
+                current_status: AssetStatus.DISPATCHED,
+                warehouse: updated.warehouse
+              });
+              remaining -= inStock;
+            }
           }
+        } catch (whErr) {
+          console.warn('Advertencia al actualizar activos de bodega:', whErr);
         }
       }
 
