@@ -1258,6 +1258,7 @@ export default function App() {
                 <ScannerModule 
                   assets={assets} 
                   spareParts={spareParts}
+                  digitalEgresses={digitalEgresses}
                   onOpenDigitalEgress={handleOpenDigitalEgress}
                   showToast={showToast}
                 />

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Asset, SparePart, DigitalEgressItem } from '../../types';
+import { Asset, SparePart, DigitalEgressItem, DigitalEgressRecord } from '../../types';
 import { 
   QrCode, 
   Camera, 
@@ -17,14 +17,22 @@ import {
   Sparkles,
   RefreshCw,
   Building2,
-  Hash
+  Hash,
+  Download,
+  Calendar,
+  User,
+  MapPin,
+  Filter,
+  Layers
 } from 'lucide-react';
 import { StatusBadge } from '../ui/StatusBadge';
 import { AssetLabelPDF } from '../AssetLabelPDF';
+import { downloadDigitalEgressPDF } from '../../services/DigitalEgressPDF';
 
 interface ScannerModuleProps {
   assets: Asset[];
   spareParts?: SparePart[];
+  digitalEgresses?: DigitalEgressRecord[];
   onOpenDigitalEgress?: (origin: 'REPUESTOS' | 'BODEGA', client: string, items: DigitalEgressItem[]) => void;
   showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
@@ -47,9 +55,14 @@ interface ScannedMatch {
 export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
   assets,
   spareParts = [],
+  digitalEgresses = [],
   onOpenDigitalEgress,
   showToast
 }) => {
+  const [activeSubTab, setActiveSubTab] = useState<'SCANNER' | 'EGRESS_LIST'>('SCANNER');
+  const [egressSearch, setEgressSearch] = useState('');
+  const [egressOriginFilter, setEgressOriginFilter] = useState<'ALL' | 'REPUESTOS' | 'BODEGA'>('ALL');
+
   const [manualCode, setManualCode] = useState('');
   const [activeMatch, setActiveMatch] = useState<ScannedMatch | null>(null);
   const [notFoundQuery, setNotFoundQuery] = useState<string | null>(null);
@@ -248,9 +261,93 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
     }
   };
 
+  // Detener cámara al cambiar de pestaña
+  useEffect(() => {
+    if (activeSubTab !== 'SCANNER' && cameraActive) {
+      stopCamera();
+    }
+  }, [activeSubTab, cameraActive, stopCamera]);
+
+  // Filtrado de egresos digitales
+  const filteredEgresses = useMemo(() => {
+    let list = digitalEgresses;
+    if (egressOriginFilter !== 'ALL') {
+      list = list.filter(e => e.origen === egressOriginFilter);
+    }
+    if (egressSearch.trim()) {
+      const q = egressSearch.toLowerCase();
+      list = list.filter(e => 
+        String(e.numero || '').toLowerCase().includes(q) ||
+        (e.titulo && e.titulo.toLowerCase().includes(q)) ||
+        (e.cliente && e.cliente.toLowerCase().includes(q)) ||
+        (e.responsable && e.responsable.toLowerCase().includes(q)) ||
+        (e.direccion && e.direccion.toLowerCase().includes(q)) ||
+        (e.observaciones && e.observaciones.toLowerCase().includes(q)) ||
+        (e.items && e.items.some(item => 
+          (item.codigo && item.codigo.toLowerCase().includes(q)) ||
+          (item.descripcion && item.descripcion.toLowerCase().includes(q)) ||
+          (item.serial_number && item.serial_number.toLowerCase().includes(q))
+        ))
+      );
+    }
+    return list;
+  }, [digitalEgresses, egressOriginFilter, egressSearch]);
+
+  const handleDownloadPDF = (egress: DigitalEgressRecord) => {
+    try {
+      downloadDigitalEgressPDF(egress);
+      if (showToast) showToast(`Descargando PDF Egreso #${egress.numero}...`, 'success');
+    } catch (err) {
+      console.error('Error al generar PDF de egreso:', err);
+      if (showToast) showToast('Error al generar el PDF del egreso.', 'error');
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-6">
-      {/* ── ENCABEZADO ── */}
+      {/* ── NAVEGACIÓN PRINCIPAL: ESCANEAR QR / LISTA DE EGRESOS ── */}
+      <div className="flex bg-slate-100 dark:bg-slate-900/80 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md mx-auto shadow-sm">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('SCANNER')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+            activeSubTab === 'SCANNER'
+              ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-md shadow-blue-500/5'
+              : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'
+          }`}
+        >
+          <ScanLine size={16} />
+          <span>Escanear QR</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('EGRESS_LIST')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+            activeSubTab === 'EGRESS_LIST'
+              ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-md shadow-blue-500/5'
+              : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'
+          }`}
+        >
+          <FileText size={16} />
+          <span>Lista de Egresos</span>
+          {digitalEgresses.length > 0 && (
+            <span className={`ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
+              activeSubTab === 'EGRESS_LIST'
+                ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300'
+                : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+            }`}>
+              {digitalEgresses.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════
+          VISTA 1: ESCANEAR QR (CÁMARA + LECTOR + TARJETA EGRESO)
+         ══════════════════════════════════════════════════════════ */}
+      {activeSubTab === 'SCANNER' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* ── ENCABEZADO ESCÁNER ── */}
       <div className="bg-white dark:bg-slate-800 p-5 md:p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5 mb-1">
@@ -483,8 +580,297 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
           </div>
         </div>
       )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════
+          VISTA 2: LISTA DE EGRESOS DIGITALES Y SUS REPUESTOS
+         ══════════════════════════════════════════════════════════ */}
+      {activeSubTab === 'EGRESS_LIST' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* ── ENCABEZADO LISTA DE EGRESOS ── */}
+          <div className="bg-white dark:bg-slate-800 p-5 md:p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2.5 mb-1">
+                <div className="p-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl">
+                  <FileText size={22} />
+                </div>
+                <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                  Lista de Egresos Realizados
+                </h1>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Historial de egresos digitales generados y el detalle de cada repuesto despachado.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                Total: <span className="text-slate-900 dark:text-white font-mono font-black">{digitalEgresses.length}</span> egreso(s)
+              </span>
+            </div>
+          </div>
+
+          {/* ── BUSCADOR Y FILTROS POR ORIGEN ── */}
+          <div className="bg-white dark:bg-slate-800 p-4 md:p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={egressSearch}
+                  onChange={(e) => setEgressSearch(e.target.value)}
+                  placeholder="Buscar por N° egreso, cliente, responsable, P/N o repuesto..."
+                  className="w-full pl-10 pr-9 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs md:text-sm dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                />
+                {egressSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setEgressSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+
+              {/* Selector de origen */}
+              <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-700 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEgressOriginFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    egressOriginFilter === 'ALL'
+                      ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+                  }`}
+                >
+                  Todos ({digitalEgresses.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEgressOriginFilter('REPUESTOS')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    egressOriginFilter === 'REPUESTOS'
+                      ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+                  }`}
+                >
+                  Repuestos ({digitalEgresses.filter(e => e.origen === 'REPUESTOS').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEgressOriginFilter('BODEGA')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    egressOriginFilter === 'BODEGA'
+                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+                  }`}
+                >
+                  Bodega ({digitalEgresses.filter(e => e.origen === 'BODEGA').length})
+                </button>
+              </div>
+            </div>
+
+            {/* Contador de resultados */}
+            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 px-1">
+              <span>
+                Mostrando <strong className="text-slate-800 dark:text-slate-200">{filteredEgresses.length}</strong> de <strong className="text-slate-800 dark:text-slate-200">{digitalEgresses.length}</strong> egreso(s)
+              </span>
+              {egressSearch && (
+                <button
+                  type="button"
+                  onClick={() => setEgressSearch('')}
+                  className="text-blue-600 dark:text-blue-400 font-bold hover:underline"
+                >
+                  Limpiar búsqueda
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ── LISTADO DE TARJETAS DE EGRESO O ESTADO VACÍO ── */}
+          {filteredEgresses.length === 0 ? (
+            <div className="bg-white dark:bg-slate-800 p-8 md:p-12 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm text-center space-y-4">
+              <div className="w-16 h-16 bg-slate-100 dark:bg-slate-900 text-slate-400 rounded-3xl mx-auto flex items-center justify-center">
+                <FileText size={32} />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-black text-slate-900 dark:text-white text-base">
+                  {digitalEgresses.length === 0 ? 'No hay egresos registrados aún' : 'No se encontraron egresos con el filtro actual'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                  {digitalEgresses.length === 0 
+                    ? 'Cuando escanees un repuesto con QR o confirmes un egreso digital, aparecerán aquí con todos sus datos y repuestos despachados.'
+                    : 'Intenta con otro término de búsqueda o selecciona otro filtro de origen.'}
+                </p>
+              </div>
+              {digitalEgresses.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveSubTab('SCANNER')}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider transition-all shadow-md shadow-blue-500/20"
+                >
+                  <ScanLine size={16} /> Ir a Escanear QR
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {filteredEgresses.map((egress) => {
+                const isRepuestos = egress.origen === 'REPUESTOS';
+                const itemsCount = egress.items?.length || 0;
+                const totalUnits = egress.items?.reduce((sum, it) => sum + (Number(it.cantidad) || 1), 0) || 0;
+
+                return (
+                  <div
+                    key={egress.id}
+                    className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden hover:border-slate-300 dark:hover:border-slate-600 transition-all"
+                  >
+                    {/* Header del Egreso */}
+                    <div className="p-4 md:p-5 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50/50 dark:bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2.5 rounded-xl shrink-0 ${
+                          isRepuestos 
+                            ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' 
+                            : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                        }`}>
+                          <FileText size={22} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-base font-black text-slate-900 dark:text-white">
+                              EGRESO DIGITAL #{egress.numero}
+                            </span>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                              isRepuestos
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                                : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800'
+                            }`}>
+                              {egress.origen || 'REPUESTOS'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            <Calendar size={13} className="shrink-0" />
+                            <span>{egress.fecha}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Botón Descargar PDF Oficial */}
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadPDF(egress)}
+                        className="self-start sm:self-auto flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 shrink-0"
+                      >
+                        <Download size={14} /> Descargar PDF
+                      </button>
+                    </div>
+
+                    {/* Metadatos: Cliente, Responsable, Ubicación */}
+                    <div className="p-4 md:p-5 space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 text-xs">
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-0.5">
+                            Cliente / Hospital
+                          </span>
+                          <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-white truncate">
+                            <Building2 size={14} className="text-blue-500 shrink-0" />
+                            <span className="truncate">{egress.cliente || 'NO ESPECIFICADO'}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-0.5">
+                            Responsable / Custodio
+                          </span>
+                          <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-white truncate">
+                            <User size={14} className="text-slate-400 shrink-0" />
+                            <span className="truncate">{egress.responsable || 'NO ESPECIFICADO'}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-0.5">
+                            Dirección / Ciudad
+                          </span>
+                          <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300 truncate">
+                            <MapPin size={14} className="text-slate-400 shrink-0" />
+                            <span className="truncate">{egress.direccion || 'Quito'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Repuestos Despachados en este Egreso */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 px-1">
+                          <div className="flex items-center gap-1.5">
+                            <Package size={14} className="text-emerald-500" />
+                            <span>Repuestos Despachados</span>
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-400">
+                            {itemsCount} {itemsCount === 1 ? 'ítem' : 'ítems'} ({totalUnits} u.)
+                          </span>
+                        </div>
+
+                        <div className="divide-y divide-slate-100 dark:divide-slate-700/60 rounded-xl border border-slate-200 dark:border-slate-700/80 overflow-hidden bg-white dark:bg-slate-900">
+                          {egress.items && egress.items.length > 0 ? (
+                            egress.items.map((item, itIdx) => (
+                              <div
+                                key={item.id || itIdx}
+                                className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                              >
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-mono text-xs font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                                      {item.codigo || 'SIN P/N'}
+                                    </span>
+                                    {item.serial_number && (
+                                      <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                                        S/N: {item.serial_number}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                                    {item.descripcion || 'Sin descripción'}
+                                  </p>
+                                </div>
+                                <div className="self-end sm:self-auto shrink-0">
+                                  <span className="font-mono font-black text-xs text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                                    {item.cantidad || 1} u.
+                                  </span>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="p-3 text-center text-xs text-slate-400 italic">
+                              Sin detalle de repuestos registrados
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Observaciones si existen */}
+                      {egress.observaciones && (
+                        <div className="bg-amber-50/70 dark:bg-amber-950/20 p-3 rounded-xl border border-amber-200/70 dark:border-amber-900/40 text-xs">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400 block mb-0.5">
+                            Observaciones
+                          </span>
+                          <p className="text-amber-900 dark:text-amber-300 text-xs leading-relaxed">
+                            {egress.observaciones}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 });
 
 ScannerModule.displayName = 'ScannerModule';
+

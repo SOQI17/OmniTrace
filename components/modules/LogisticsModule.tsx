@@ -37,7 +37,8 @@ import {
   ExternalLink,
   RotateCcw,
   Loader2,
-  Edit3
+  Edit3,
+  Warehouse
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FilterSelect } from '../ui/FilterSelect';
@@ -506,6 +507,61 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
     }
   };
 
+  // ─── Reportar Llegada a Bodega desde Logística ─────────────────────────────
+  const handleReportOrderToBodega = async (targetAssets: Asset[]) => {
+    if (!targetAssets || targetAssets.length === 0 || !currentUser) return;
+
+    const pendingAssets = targetAssets.filter(a => a.current_status !== AssetStatus.RECEIVED_WH);
+    if (pendingAssets.length === 0) {
+      showToast('Todos los ítems seleccionados ya se encuentran en Bodega.', 'info');
+      return;
+    }
+
+    const orderRef = targetAssets[0]?.metadata?.numero_orden_ge || 'esta orden';
+    const confirmed = await showConfirm(
+      `¿Confirmas reportar la llegada a bodega de ${pendingAssets.length} ítem(s) de la orden ${orderRef}? El estado cambiará a EN BODEGA.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const fechaLlegadaStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+      const isoString = now.toISOString();
+
+      const batch = writeBatch(db);
+
+      for (const asset of pendingAssets) {
+        const updatedAsset: Asset = {
+          ...asset,
+          current_status: AssetStatus.RECEIVED_WH,
+          warehouse: {
+            ...asset.warehouse,
+            fecha_ingreso: fechaLlegadaStr
+          }
+        };
+        batch.set(doc(db, 'assets', asset.id), updatedAsset);
+
+        const auditEntry: AuditLogEntry = {
+          id: generateUUID(),
+          asset_id: asset.id,
+          timestamp: isoString,
+          action: 'STATUS_TRANSITION',
+          user_name: currentUser.name || currentUser.email || 'Logística',
+          user_role: currentUser.role,
+          details: `Reportado a bodega desde Logística: ${asset.current_status} → ${AssetStatus.RECEIVED_WH}`
+        };
+        batch.set(doc(db, 'audit_log', auditEntry.id), auditEntry);
+      }
+
+      await batch.commit();
+      showToast(`✅ ${pendingAssets.length} ítem(s) reportados a Bodega correctamente.`, 'success');
+    } catch (err: any) {
+      console.error('Error reportando a bodega:', err);
+      showError(err.message || 'Error al reportar a bodega.');
+    }
+  };
+
   const handleUpdateLogisticsFinal = async () => {
     if (!selectedAsset || !currentUser) return;
     
@@ -823,24 +879,43 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
                 </td>
 
                 <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            const reqClient = mainAsset.metadata.cliente_final && mainAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK'
-                                ? mainAsset.metadata.cliente_final.trim()
-                                : '';
-                            onOpenDigitalEgress('REPUESTOS', reqClient, group.map(a => ({
-                                codigo: a.metadata.pn,
-                                cantidad: Number(a.metadata.cantidad) || 1,
-                                descripcion: a.metadata.description,
-                                serial_number: a.metadata.serial_ge && a.metadata.serial_ge !== 'PENDIENTE' ? a.metadata.serial_ge : ''
-                            })));
-                        }}
-                        title="Generar Egreso Digital para esta Solicitud"
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
-                    >
-                        <FileText size={16}/>
-                    </button>
+                    <div className="flex items-center justify-center gap-1.5">
+                        {group.every(a => a.current_status === AssetStatus.RECEIVED_WH) ? (
+                            <span
+                                title="Todos los ítems de esta orden ya están en Bodega"
+                                className="p-1.5 rounded-lg text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
+                            >
+                                <CheckCircle size={16}/>
+                            </span>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => handleReportOrderToBodega(group)}
+                                title="Reportar orden a Bodega (Marcar llegada a bodega)"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
+                            >
+                                <Warehouse size={16}/>
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const reqClient = mainAsset.metadata.cliente_final && mainAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK'
+                                    ? mainAsset.metadata.cliente_final.trim()
+                                    : '';
+                                onOpenDigitalEgress('REPUESTOS', reqClient, group.map(a => ({
+                                    codigo: a.metadata.pn,
+                                    cantidad: Number(a.metadata.cantidad) || 1,
+                                    descripcion: a.metadata.description,
+                                    serial_number: a.metadata.serial_ge && a.metadata.serial_ge !== 'PENDIENTE' ? a.metadata.serial_ge : ''
+                                })));
+                            }}
+                            title="Generar Egreso Digital para esta Solicitud"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
+                        >
+                            <FileText size={16}/>
+                        </button>
+                    </div>
                 </td>
 
                 <td className="p-4 text-center text-slate-300 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
@@ -888,37 +963,60 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
                                     <div className="text-left md:text-right flex flex-col items-start md:items-end gap-2">
                                         <div className="mb-2"><StatusBadge status={selectedAsset.current_status} /></div>
                                         <div className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-tighter">Creado: {new Date(selectedAsset.metadata.fecha_solicitud).toLocaleDateString()}</div>
-                                        <div className="flex items-center gap-2">
-                                            <button
-                                                onClick={() => {
-                                                    const reqClient = selectedAsset.metadata.cliente_final && selectedAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK'
-                                                        ? selectedAsset.metadata.cliente_final.trim()
-                                                        : '';
-                                                    onOpenDigitalEgress('REPUESTOS', reqClient, [{
-                                                        codigo: selectedAsset.metadata.pn,
-                                                        cantidad: Number(selectedAsset.metadata.cantidad) || 1,
-                                                        descripcion: selectedAsset.metadata.description,
-                                                        serial_number: selectedAsset.metadata.serial_ge && selectedAsset.metadata.serial_ge !== 'PENDIENTE' ? selectedAsset.metadata.serial_ge : ''
-                                                    }]);
-                                                }}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-sm"
-                                                title="Generar Egreso Digital para esta solicitud"
-                                            >
-                                                <FileText size={13}/> Egreso Digital
-                                            </button>
-                                            <button
-                                                onClick={() => setShowComments(v => !v)}
-                                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${showComments ? 'bg-blue-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
-                                            >
-                                                <MessageSquare size={14}/>
-                                                Notas
-                                                {(comments[selectedAsset.metadata.numero_orden_ge] || []).length > 0 && (
-                                                    <span className="bg-blue-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">
-                                                        {(comments[selectedAsset.metadata.numero_orden_ge] || []).length}
-                                                    </span>
-                                                )}
-                                            </button>
-                                        </div>
+                                        {(() => {
+                                            const targetOrderAssets = isConsolidationMode && pendingSelection.length > 0
+                                                ? assets.filter(a => pendingSelection.includes(a.id))
+                                                : assets.filter(a => a.metadata.numero_orden_ge === selectedAsset.metadata.numero_orden_ge);
+                                            const allOrderInBodega = targetOrderAssets.length > 0 && targetOrderAssets.every(a => a.current_status === AssetStatus.RECEIVED_WH);
+
+                                            return (
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    {allOrderInBodega ? (
+                                                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                                            <CheckCircle size={13}/> En Bodega
+                                                        </div>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleReportOrderToBodega(targetOrderAssets)}
+                                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-sm active:scale-95"
+                                                            title="Reportar que este pedido ya llegó y está en bodega"
+                                                        >
+                                                            <Warehouse size={13}/> Reportar a Bodega
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => {
+                                                            const reqClient = selectedAsset.metadata.cliente_final && selectedAsset.metadata.cliente_final.trim().toUpperCase() !== 'STOCK'
+                                                                ? selectedAsset.metadata.cliente_final.trim()
+                                                                : '';
+                                                            onOpenDigitalEgress('REPUESTOS', reqClient, [{
+                                                                codigo: selectedAsset.metadata.pn,
+                                                                cantidad: Number(selectedAsset.metadata.cantidad) || 1,
+                                                                descripcion: selectedAsset.metadata.description,
+                                                                serial_number: selectedAsset.metadata.serial_ge && selectedAsset.metadata.serial_ge !== 'PENDIENTE' ? selectedAsset.metadata.serial_ge : ''
+                                                            }]);
+                                                        }}
+                                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-sm"
+                                                        title="Generar Egreso Digital para esta solicitud"
+                                                    >
+                                                        <FileText size={13}/> Egreso Digital
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setShowComments(v => !v)}
+                                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${showComments ? 'bg-blue-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
+                                                    >
+                                                        <MessageSquare size={14}/>
+                                                        Notas
+                                                        {(comments[selectedAsset.metadata.numero_orden_ge] || []).length > 0 && (
+                                                            <span className="bg-blue-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">
+                                                                {(comments[selectedAsset.metadata.numero_orden_ge] || []).length}
+                                                            </span>
+                                                        )}
+                                                    </button>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
                             </div>
@@ -1020,28 +1118,44 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
                                             </button>
                                         </div>
                                     </div>
-                                    {logisticsSubTab === 'INITIAL' && (
+                                    {logisticsSubTab === 'INITIAL' && (() => {
+                                        let targetAssets: Asset[] = [];
+                                        if (isConsolidationMode && pendingSelection.length > 0) {
+                                            targetAssets = assets.filter(a => pendingSelection.includes(a.id));
+                                        } else {
+                                            targetAssets = assets.filter(a => a.metadata.numero_orden_ge === selectedAsset.metadata.numero_orden_ge);
+                                        }
+                                        const allReceived = targetAssets.length > 0 && targetAssets.every(a => a.current_status === AssetStatus.RECEIVED_WH);
+
+                                        return (
                                         <form onSubmit={handleUpdateLogisticsInitial} className="p-8">
                                             {isConsolidationMode && (<div className="bg-blue-800 text-white p-4 rounded-lg mb-8 text-[10px] font-black uppercase tracking-widest flex items-center gap-3 shadow-md"><Layers size={20} /> Consolidación Activa: {consolidationList.length + 1} órdenes</div>)}
                                             
                                             <div className="space-y-6">
-                                              {(() => {
-                                                  // Determine assets to display
-                                                  let targetAssets: Asset[] = [];
-                                                  if (isConsolidationMode && pendingSelection.length > 0) {
-                                                      targetAssets = assets.filter(a => pendingSelection.includes(a.id));
-                                                  } else {
-                                                      targetAssets = assets.filter(a => a.metadata.numero_orden_ge === selectedAsset.metadata.numero_orden_ge);
-                                                  }
-                                                  
-                                                  return targetAssets.map(asset => (
+                                                {targetAssets.map(asset => (
                                                     <div key={asset.id} className="bg-slate-50 dark:bg-slate-900 p-6 rounded-lg border border-slate-200 dark:border-slate-700">
-                                                        <div className="flex justify-between items-center mb-4">
+                                                        <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
                                                             <div>
                                                                 <h4 className="font-black text-slate-800 dark:text-slate-200 text-xs uppercase">{asset.metadata.pn}</h4>
                                                                 <p className="text-[10px] text-slate-500 dark:text-slate-400">{asset.metadata.description}</p>
                                                             </div>
-                                                            <div className="text-[9px] font-bold bg-white dark:bg-slate-800 px-2 py-1 rounded border dark:border-slate-600 text-slate-600 dark:text-slate-300">Qty: {asset.metadata.cantidad}</div>
+                                                            <div className="flex items-center gap-2">
+                                                                {asset.current_status === AssetStatus.RECEIVED_WH ? (
+                                                                    <span className="text-[9px] font-black uppercase px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                                                                        <CheckCircle size={11} /> En Bodega
+                                                                    </span>
+                                                                ) : (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleReportOrderToBodega([asset])}
+                                                                        className="text-[9px] font-black uppercase px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800 flex items-center gap-1 transition-all active:scale-95"
+                                                                        title="Reportar este repuesto como recibido en bodega"
+                                                                    >
+                                                                        <Warehouse size={11} /> Reportar a Bodega
+                                                                    </button>
+                                                                )}
+                                                                <div className="text-[9px] font-bold bg-white dark:bg-slate-800 px-2 py-1 rounded border dark:border-slate-600 text-slate-600 dark:text-slate-300">Qty: {asset.metadata.cantidad}</div>
+                                                            </div>
                                                         </div>
                                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                             <div>
@@ -1066,19 +1180,40 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = memo(({
                                                             </div>
                                                         </div>
                                                     </div>
-                                                  ));
-                                              })()}
+                                                ))}
                                             </div>
 
                                             {canEditLogistics && (
-                                                <div className="flex justify-end border-t border-slate-100 dark:border-slate-700 pt-6 mt-6">
-                                                    <button className="bg-slate-900 dark:bg-blue-600 text-white px-8 py-3 rounded-lg font-black uppercase text-[10px] tracking-widest hover:bg-slate-800 flex items-center gap-2 shadow-md transition-all">
+                                                <div className="flex flex-wrap items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-6 mt-6 gap-3">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleReportOrderToBodega(targetAssets)}
+                                                        disabled={allReceived}
+                                                        className={`px-6 py-3 rounded-lg font-black uppercase text-[10px] tracking-widest flex items-center gap-2 shadow-md transition-all ${
+                                                            allReceived 
+                                                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800 cursor-default'
+                                                                : 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
+                                                        }`}
+                                                    >
+                                                        {allReceived ? (
+                                                            <>
+                                                                <CheckCircle size={16}/> Ya Llegó a Bodega
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <Warehouse size={16}/> Reportar Llegada a Bodega
+                                                            </>
+                                                        )}
+                                                    </button>
+
+                                                    <button type="submit" className="bg-slate-900 dark:bg-blue-600 text-white px-8 py-3 rounded-lg font-black uppercase text-[10px] tracking-widest hover:bg-slate-800 flex items-center gap-2 shadow-md transition-all">
                                                         <Save size={16}/> Guardar Registro
                                                     </button>
                                                 </div>
                                             )}
                                         </form>
-                                    )}
+                                        );
+                                    })()}
                                     {logisticsSubTab === 'FINAL' && (
                                         <form id="final-logistics-form" className="p-4 md:p-8 text-sm">
                                             {/* ... Final Logistics Form Content ... */}
