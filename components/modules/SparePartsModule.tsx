@@ -42,10 +42,13 @@ import {
   DollarSign,
   Wrench,
   MoreVertical,
-  Filter
+  Filter,
+  Mail
 } from 'lucide-react';
 import { FilterSelect } from '../ui/FilterSelect';
 import { generateUUID, sanitizeRow, normalizeSparePartCondition } from '../../utils/helpers';
+import { EmailNotificationModal } from '../EmailNotificationModal';
+import { EmailSparePartItem } from '../../utils/emailDispatcher';
 
 export interface SparePartsModuleProps {
   spareParts: SparePart[];
@@ -90,6 +93,37 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
   const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az' | 'price_desc' | 'price_asc'>('ge_newest');
   const [showSparePartModal, setShowSparePartModal] = useState(false);
   const [editingSparePart, setEditingSparePart] = useState<SparePart | null>(null);
+  const [emailModalData, setEmailModalData] = useState<{
+    isOpen: boolean;
+    items: EmailSparePartItem[];
+    defaultClient?: string;
+    defaultOrderGe?: string;
+  } | null>(null);
+
+  const handleOpenEmailForSpareParts = (parts: SparePart[]) => {
+    if (parts.length === 0) return;
+    const items: EmailSparePartItem[] = parts.map(p => ({
+      pn: p.pn,
+      descripcion: p.descripcion,
+      cliente: p.cliente,
+      mod: normalizeOrInferModality(p.mod, p.equipo) || p.mod,
+      equipo: p.equipo,
+      cantidad: p.cantidad || 1,
+      condicion: normalizeSparePartCondition(p.condicion, p.precio),
+      precio: p.precio,
+      orden_ge: p.orden_ge
+    }));
+
+    const firstClient = parts.find(p => p.cliente && p.cliente.trim() !== '' && p.cliente.toUpperCase() !== 'STOCK')?.cliente || parts[0]?.cliente || '';
+    const firstOrder = parts.find(p => p.orden_ge && p.orden_ge.trim() !== '')?.orden_ge || parts[0]?.orden_ge || '';
+
+    setEmailModalData({
+      isOpen: true,
+      items,
+      defaultClient: firstClient,
+      defaultOrderGe: firstOrder
+    });
+  };
   const [csvImporting, setCsvImporting] = useState(false);
   const [sparePartsViewMode, setSparePartsViewMode] = useState<'TABLE' | 'ANALYTICS'>('TABLE');
   const [sparePartsAnalyticsScope, setSparePartsAnalyticsScope] = useState<'GLOBAL' | 'FILTERED'>('GLOBAL');
@@ -1025,6 +1059,25 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                         </span>
                                     )}
                                 </button>
+                                {/* Enviar correo a Paul */}
+                                <button 
+                                    onClick={() => {
+                                        const selected = selectedSparePartIds.size > 0
+                                            ? spareParts.filter(p => selectedSparePartIds.has(p.id))
+                                            : filteredSpareParts.slice(0, 1);
+                                        handleOpenEmailForSpareParts(selected);
+                                    }}
+                                    disabled={filteredSpareParts.length === 0}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-40"
+                                    title="Enviar correo de requerimiento a Paul Orozco"
+                                >
+                                    <Mail size={14}/> Enviar a Paul
+                                    {selectedSparePartIds.size > 0 && (
+                                        <span className="bg-white/20 text-white px-2 py-0.5 rounded-full text-[10px] font-bold">
+                                            {selectedSparePartIds.size}
+                                        </span>
+                                    )}
+                                </button>
 
                                 {/* Nuevo manual */}
                                 <button onClick={() => setShowSparePartModal(true)}
@@ -1487,6 +1540,14 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                         >
                                                             <FileText size={13}/> Egreso Digital
                                                         </button>
+                                                        <button 
+                                                            type="button"
+                                                            onClick={() => handleOpenEmailForSpareParts([sp])} 
+                                                            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 transition-colors"
+                                                            title="Enviar correo a Paul Orozco"
+                                                        >
+                                                            <Mail size={13}/> Correo Paul
+                                                        </button>
                                                         {canManageSpareParts && (
                                                             <>
                                                                 <button 
@@ -1761,6 +1822,14 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                                             className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-all"
                                                                         >
                                                                             <FileText size={15}/>
+                                                                        </button>
+                                                                        <button 
+                                                                            type="button"
+                                                                            onClick={() => handleOpenEmailForSpareParts([sp])} 
+                                                                            title="Enviar correo de requerimiento a Paul Orozco"
+                                                                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all"
+                                                                        >
+                                                                            <Mail size={15}/>
                                                                         </button>
                                                                         <button 
                                                                             type="button"
@@ -2471,6 +2540,18 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                     </form>
                                 </div>
                             </div>
+                        )}
+
+                        {emailModalData && emailModalData.isOpen && (
+                            <EmailNotificationModal
+                                isOpen={true}
+                                onClose={() => setEmailModalData(null)}
+                                items={emailModalData.items}
+                                defaultClient={emailModalData.defaultClient}
+                                defaultOrderGe={emailModalData.defaultOrderGe}
+                                senderName={currentUser?.name || 'Alexis Guerra'}
+                                showToast={showToast}
+                            />
                         )}
                     </div>
                 );

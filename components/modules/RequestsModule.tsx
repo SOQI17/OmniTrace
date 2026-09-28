@@ -12,10 +12,12 @@ import { db } from '../../firebase';
 import { doc, writeBatch } from 'firebase/firestore';
 import { 
   Cpu, Monitor, Wrench, ArrowRight, ArrowLeft, Trash2, 
-  Plus, ShoppingCart 
+  Plus, ShoppingCart, Mail, Send 
 } from 'lucide-react';
 import { generateUUID, normalizeSparePartCondition } from '../../utils/helpers';
 import { EditableField } from '../ui/EditableField';
+import { EmailNotificationModal } from '../EmailNotificationModal';
+import { EmailSparePartItem } from '../../utils/emailDispatcher';
 
 interface RequestsModuleProps {
   assets: Asset[];
@@ -40,6 +42,11 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
   const [reqQty, setReqQty] = useState(1);
   const [reqCost, setReqCost] = useState('');
   const [reqCostoDia, setReqCostoDia] = useState('');
+  const [emailModalData, setEmailModalData] = useState<{
+    items: EmailSparePartItem[];
+    cliente: string;
+    ordenGe: string;
+  } | null>(null);
 
   const handleAddRequestItem = () => {
     if (!reqPn || !reqDesc) return;
@@ -59,6 +66,8 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
   const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || requestItems.length === 0) return;
+    const submitter = (e.nativeEvent as any)?.submitter;
+    const isCreateAndEmail = submitter?.value === 'create_and_email';
     const formData = new FormData(e.target as HTMLFormElement);
     const batch = writeBatch(db);
     const now = new Date();
@@ -69,6 +78,21 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
     const rawMod = ((formData.get('mod') as string) || selectedMod || '').trim();
     const rawEquipo = ((formData.get('equipo_destino') as string) || '').trim();
     const finalMod = normalizeOrInferModality(rawMod, rawEquipo);
+    const clienteFinal = (formData.get('cliente_final') as string) || '';
+    const ordenGe = (formData.get('numero_orden_ge') as string) || '';
+    const condicionStr = (formData.get('condicion') as string) || '';
+
+    const itemsToEmail: EmailSparePartItem[] = requestItems.map(item => ({
+      pn: item.pn,
+      descripcion: item.description,
+      cantidad: item.cantidad,
+      cliente: clienteFinal,
+      mod: finalMod,
+      equipo: rawEquipo,
+      condicion: normalizeSparePartCondition(condicionStr, item.cost ? Number(item.cost) : undefined),
+      precio: item.cost ? Number(item.cost) : undefined,
+      orden_ge: ordenGe
+    }));
 
     requestItems.forEach(item => {
       const id = generateUUID();
@@ -131,10 +155,21 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
 
     await batch.commit();
     showToast('Solicitud creada y registrada en Repuestos.', 'success');
-    setRequestItems([]);
-    setSelectedMod('');
-    setRequestMode('MENU');
-    onSuccessNavigate();
+
+    if (isCreateAndEmail) {
+      setEmailModalData({
+        items: itemsToEmail,
+        cliente: clienteFinal,
+        ordenGe
+      });
+      setRequestItems([]);
+      setSelectedMod('');
+    } else {
+      setRequestItems([]);
+      setSelectedMod('');
+      setRequestMode('MENU');
+      onSuccessNavigate();
+    }
   };
 
   const handleCreateToolsRequest = async (e: React.FormEvent) => {
@@ -369,9 +404,25 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
                 </div>
               )}
             </div>
-            <div className="pt-6 border-t dark:border-slate-700 flex justify-end">
-              <button type="submit" disabled={requestItems.length === 0} className="bg-slate-900 dark:bg-blue-600 text-white px-10 py-4 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-slate-800 dark:hover:bg-blue-700 disabled:opacity-30 flex items-center gap-3 transition-all active:scale-95 shadow-md">
-                <ShoppingCart size={18} /> Crear Solicitud
+            <div className="pt-6 border-t dark:border-slate-700 flex flex-wrap items-center justify-end gap-3">
+              <button 
+                type="submit" 
+                name="action"
+                value="only_create"
+                disabled={requestItems.length === 0} 
+                className="bg-slate-800 hover:bg-slate-700 dark:bg-slate-750 dark:hover:bg-slate-700 text-white px-6 py-4 rounded-xl font-bold uppercase text-xs tracking-wider disabled:opacity-30 flex items-center gap-2 transition-all active:scale-95 shadow-md"
+              >
+                <ShoppingCart size={17} /> Solo Crear Solicitud
+              </button>
+              <button 
+                type="submit" 
+                name="action"
+                value="create_and_email"
+                disabled={requestItems.length === 0} 
+                className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl font-black uppercase text-xs tracking-widest disabled:opacity-30 flex items-center gap-2.5 transition-all active:scale-95 shadow-lg shadow-blue-500/25"
+                title="Crear en el sistema y abrir de inmediato el correo para notificar a Paul Orozco"
+              >
+                <Mail size={17} /> Crear y Enviar Correo a Paul
               </button>
             </div>
           </form>
@@ -503,6 +554,22 @@ export const RequestsModule: React.FC<RequestsModuleProps> = memo(({
             </div>
           </form>
         </div>
+      )}
+
+      {emailModalData && (
+        <EmailNotificationModal
+          isOpen={true}
+          onClose={() => {
+            setEmailModalData(null);
+            setRequestMode('MENU');
+            onSuccessNavigate();
+          }}
+          items={emailModalData.items}
+          defaultClient={emailModalData.cliente}
+          defaultOrderGe={emailModalData.ordenGe}
+          senderName={currentUser?.name || 'Alexis Guerra'}
+          showToast={showToast}
+        />
       )}
     </div>
   );
