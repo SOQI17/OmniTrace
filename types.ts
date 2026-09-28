@@ -306,7 +306,7 @@ export interface DigitalEgressItem {
 
 export interface DigitalEgressRecord {
   id: string;
-  numero: number;             // Correlativo que inicia en 1
+  numero: number | string;    // Correlativo o número personalizado de egreso
   titulo: string;             // "EGRESO DIGITAL 1"
   cliente: string;            // Código / Nombre de Hospital
   fecha: string;              // Fecha formal (ej: "martes, 08 de septiembre de 2026")

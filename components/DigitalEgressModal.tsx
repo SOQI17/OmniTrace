@@ -44,7 +44,7 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
     }
   };
 
-  const [numero, setNumero] = useState<number>(nextEgressNumber || 1);
+  const [numero, setNumero] = useState<string>(String(nextEgressNumber || 1));
   const [cliente, setCliente] = useState<string>(initialClient || '');
   const [fecha, setFecha] = useState<string>(getInitialDate());
   const [responsable, setResponsable] = useState<string>(currentUserName || '');
@@ -57,7 +57,7 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setNumero(nextEgressNumber || 1);
+      setNumero(String(nextEgressNumber || 1));
       setCliente(initialClient || '');
       setFecha(getInitialDate());
       setResponsable(currentUserName || '');
@@ -73,10 +73,15 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
 
   if (!isOpen) return null;
 
+  const cleanNumStr = String(numero).trim();
+  const parsedNum = parseInt(cleanNumStr.replace(/[^\d]/g, ''), 10);
+  const finalNumero = !isNaN(parsedNum) && parsedNum > 0 ? parsedNum : (cleanNumStr || 1);
+  const displayNum = cleanNumStr || String(finalNumero);
+
   const currentRecord: DigitalEgressRecord = {
-    id: `EG_${numero}_${Date.now()}`,
-    numero: Number(numero) || 1,
-    titulo: `EGRESO DIGITAL ${Number(numero) || 1}`,
+    id: `EG_${displayNum}_${Date.now()}`,
+    numero: finalNumero,
+    titulo: `EGRESO DIGITAL #${displayNum}`,
     cliente: (cliente || '').trim(),
     fecha: (fecha || '').trim(),
     fecha_iso: new Date().toISOString(),
@@ -174,7 +179,7 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-black tracking-tight text-base sm:text-lg">
-                  EGRESO DIGITAL #{numero}
+                  EGRESO DIGITAL #{displayNum}
                 </h3>
                 <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800">
                   {initialOrigin}
@@ -229,16 +234,22 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
               {/* Document Metadata Form */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60">
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
-                    N° Egreso Digital *
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1 flex items-center justify-between">
+                    <span>N° Egreso Digital *</span>
+                    <span className="text-[9px] text-emerald-500 font-bold lowercase tracking-normal bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">editable</span>
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={numero}
-                    onChange={(e) => setNumero(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-full font-mono font-bold text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={numero}
+                      onChange={(e) => setNumero(e.target.value)}
+                      placeholder={String(nextEgressNumber || 1)}
+                      className="w-full font-mono font-bold text-sm pl-7 pr-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-mono font-bold text-xs select-none">
+                      #
+                    </span>
+                  </div>
                 </div>
 
                 <div>
@@ -420,7 +431,7 @@ export const DigitalEgressModal: React.FC<DigitalEgressModalProps> = ({
             /* PREVIEW MODE */
             <div className="max-w-2xl mx-auto bg-white text-slate-900 p-8 rounded-xl shadow-lg border border-slate-300 font-sans">
               <h2 className="text-center font-bold text-base tracking-tight mb-4 uppercase">
-                EGRESO DIGITAL {numero}
+                EGRESO DIGITAL #{displayNum}
               </h2>
 
               <div className="border border-slate-400 text-xs mb-4">
