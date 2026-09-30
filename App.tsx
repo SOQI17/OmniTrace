@@ -859,6 +859,65 @@ export default function App() {
     }
   };
 
+  // ─── Actualizar Egreso Digital (Admin) ──────────────────────────────────
+  const handleUpdateDigitalEgress = async (updatedEgress: DigitalEgressRecord) => {
+    if (!currentUser) return;
+    try {
+      await setDoc(doc(db, 'egresos_digitales', updatedEgress.id), updatedEgress, { merge: true });
+
+      // Auditoría de actualización
+      try {
+        await addDoc(collection(db, 'audit_log'), {
+          asset_id: `EGRESO_${updatedEgress.numero}`,
+          actor_id: currentUser.name || currentUser.id || 'ADMIN',
+          action: 'UPDATE_DIGITAL_EGRESS',
+          prev_value: null,
+          new_value: {
+            numero: updatedEgress.numero,
+            cliente: updatedEgress.cliente,
+            responsable: updatedEgress.responsable,
+            total_items: updatedEgress.items?.length || 0,
+            origen: updatedEgress.origen
+          },
+          timestamp: new Date().toISOString()
+        });
+      } catch (auditErr) {
+        console.warn('Error en auditoría de egreso editado:', auditErr);
+      }
+
+      showToast(`✅ ${updatedEgress.titulo} actualizado con éxito.`, 'success', 4000);
+    } catch (err: any) {
+      showError(`Error al actualizar egreso digital: ${err.message}`);
+      throw err;
+    }
+  };
+
+  // ─── Eliminar Egreso Digital (Admin) ───────────────────────────────────
+  const handleDeleteDigitalEgress = async (egressId: string) => {
+    if (!currentUser) return;
+    try {
+      await deleteDoc(doc(db, 'egresos_digitales', egressId));
+
+      try {
+        await addDoc(collection(db, 'audit_log'), {
+          asset_id: egressId,
+          actor_id: currentUser.name || currentUser.id || 'ADMIN',
+          action: 'DELETE_DIGITAL_EGRESS',
+          prev_value: null,
+          new_value: { deletedId: egressId },
+          timestamp: new Date().toISOString()
+        });
+      } catch (auditErr) {
+        console.warn('Error en auditoría de egreso eliminado:', auditErr);
+      }
+
+      showToast('Egreso digital eliminado correctamente.', 'info', 4000);
+    } catch (err: any) {
+      showError(`Error al eliminar egreso digital: ${err.message}`);
+      throw err;
+    }
+  };
+
 
 // (Cálculo y exportación modularizados en LogisticsModule)
 
@@ -1267,7 +1326,11 @@ export default function App() {
                   assets={assets} 
                   spareParts={spareParts}
                   digitalEgresses={digitalEgresses}
+                  currentUser={currentUser}
+                  isAdmin={isAdmin || canManageSpareParts}
                   onOpenDigitalEgress={handleOpenDigitalEgress}
+                  onUpdateDigitalEgress={handleUpdateDigitalEgress}
+                  onDeleteDigitalEgress={handleDeleteDigitalEgress}
                   showToast={showToast}
                 />
             )}

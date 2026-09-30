@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Asset, SparePart, DigitalEgressItem, DigitalEgressRecord } from '../../types';
+import { Asset, SparePart, DigitalEgressItem, DigitalEgressRecord, User as UserType } from '../../types';
 import { 
   QrCode, 
   Camera, 
@@ -23,17 +23,23 @@ import {
   User,
   MapPin,
   Filter,
-  Layers
+  Layers,
+  Edit3
 } from 'lucide-react';
 import { StatusBadge } from '../ui/StatusBadge';
 import { AssetLabelPDF } from '../AssetLabelPDF';
 import { downloadDigitalEgressPDF } from '../../services/DigitalEgressPDF';
+import { EditDigitalEgressModal } from '../EditDigitalEgressModal';
 
 interface ScannerModuleProps {
   assets: Asset[];
   spareParts?: SparePart[];
   digitalEgresses?: DigitalEgressRecord[];
+  currentUser?: UserType | null;
+  isAdmin?: boolean;
   onOpenDigitalEgress?: (origin: 'REPUESTOS' | 'BODEGA', client: string, items: DigitalEgressItem[]) => void;
+  onUpdateDigitalEgress?: (updatedEgress: DigitalEgressRecord) => Promise<void>;
+  onDeleteDigitalEgress?: (egressId: string) => Promise<void>;
   showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -56,12 +62,18 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
   assets,
   spareParts = [],
   digitalEgresses = [],
+  currentUser,
+  isAdmin = false,
   onOpenDigitalEgress,
+  onUpdateDigitalEgress,
+  onDeleteDigitalEgress,
   showToast
 }) => {
+  const userIsAdmin = isAdmin || currentUser?.role === 'ADMIN' || Boolean(currentUser?.name && currentUser.name.toLowerCase().includes('alexis'));
   const [activeSubTab, setActiveSubTab] = useState<'SCANNER' | 'EGRESS_LIST'>('SCANNER');
   const [egressSearch, setEgressSearch] = useState('');
   const [egressOriginFilter, setEgressOriginFilter] = useState<'ALL' | 'REPUESTOS' | 'BODEGA'>('ALL');
+  const [editingEgress, setEditingEgress] = useState<DigitalEgressRecord | null>(null);
 
   const [manualCode, setManualCode] = useState('');
   const [activeMatch, setActiveMatch] = useState<ScannedMatch | null>(null);
@@ -756,14 +768,26 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
                         </div>
                       </div>
 
-                      {/* Botón Descargar PDF Oficial */}
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadPDF(egress)}
-                        className="self-start sm:self-auto flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 shrink-0"
-                      >
-                        <Download size={14} /> Descargar PDF
-                      </button>
+                      {/* Acciones: Editar (Admin) & Descargar PDF Oficial */}
+                      <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+                        {userIsAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingEgress(egress)}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30 text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 shrink-0"
+                            title="Editar este egreso digital"
+                          >
+                            <Edit3 size={14} /> Editar
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadPDF(egress)}
+                          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 shrink-0"
+                        >
+                          <Download size={14} /> Descargar PDF
+                        </button>
+                      </div>
                     </div>
 
                     {/* Metadatos: Cliente, Responsable, Ubicación */}
@@ -867,6 +891,23 @@ export const ScannerModule: React.FC<ScannerModuleProps> = memo(({
             </div>
           )}
         </div>
+      )}
+
+      {/* Modal de Edición de Egreso Digital (Admin) */}
+      {editingEgress && (
+        <EditDigitalEgressModal
+          isOpen={Boolean(editingEgress)}
+          onClose={() => setEditingEgress(null)}
+          egress={editingEgress}
+          onSave={async (updated) => {
+            if (onUpdateDigitalEgress) {
+              await onUpdateDigitalEgress(updated);
+            }
+          }}
+          onDelete={onDeleteDigitalEgress}
+          availableSpareParts={spareParts}
+          showToast={showToast}
+        />
       )}
     </div>
   );
