@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo, memo } from 'react';
+import React, { useState, useRef, useMemo, useCallback, memo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import * as XLSX from 'xlsx';
 import { 
@@ -7,6 +7,7 @@ import {
   User, 
   SparePart,
   DigitalEgressItem,
+  DigitalEgressRecord,
   STANDARD_MODALITIES,
   normalizeOrInferModality
 } from '../../types';
@@ -54,6 +55,7 @@ export interface SparePartsModuleProps {
   spareParts: SparePart[];
   sparePartsLoading: boolean;
   assets: Asset[];
+  digitalEgresses?: DigitalEgressRecord[];
   currentUser: User | null;
   canManageSpareParts: boolean;
   showToast: (msg: string, type?: 'success' | 'error' | 'info', duration?: number) => void;
@@ -70,6 +72,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
   spareParts,
   sparePartsLoading,
   assets,
+  digitalEgresses = [],
   currentUser,
   canManageSpareParts,
   showToast,
@@ -90,6 +93,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
   const [sparePartsFilterMod, setSparePartsFilterMod] = useState('');
   const [sparePartsFilterCondicion, setSparePartsFilterCondicion] = useState('');
   const [sparePartsFilterOrigen, setSparePartsFilterOrigen] = useState('');
+  const [sparePartsFilterEstado, setSparePartsFilterEstado] = useState<'ALL' | 'EGRESADO' | 'PENDIENTE'>('ALL');
   const [sparePartsSort, setSparePartsSort] = useState<'newest' | 'oldest' | 'ge_newest' | 'ge_oldest' | 'pn_az' | 'pn_za' | 'cliente_az' | 'price_desc' | 'price_asc'>('ge_newest');
   const [showSparePartModal, setShowSparePartModal] = useState(false);
   const [editingSparePart, setEditingSparePart] = useState<SparePart | null>(null);
@@ -99,6 +103,35 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
     defaultClient?: string;
     defaultOrderGe?: string;
   } | null>(null);
+
+  // ─── Mapa de Información de Egresos Digitales ─────────────────────────────
+  const egressedInfoBySparePartId = useMemo(() => {
+    const map = new Map<string, { fecha: string; numero: string | number }>();
+    if (!digitalEgresses) return map;
+    digitalEgresses.forEach(egress => {
+      egress.items?.forEach(it => {
+        if (it.spare_part_id) {
+          map.set(it.spare_part_id, { fecha: egress.fecha, numero: egress.numero });
+        }
+      });
+    });
+    return map;
+  }, [digitalEgresses]);
+
+  const assetMap = useMemo(() => {
+    const map = new Map<string, Asset>();
+    assets.forEach(a => map.set(a.id, a));
+    return map;
+  }, [assets]);
+
+  const getSparePartEgressInfo = useCallback((sp: SparePart, linkedAsset?: Asset) => {
+    const hasEgressDate = Boolean(sp.fecha_egreso && sp.fecha_egreso.trim() !== '' && sp.fecha_egreso !== '—' && sp.fecha_egreso !== '-');
+    const digitalInfo = egressedInfoBySparePartId.get(sp.id);
+    const isDispatched = linkedAsset?.current_status === AssetStatus.DISPATCHED;
+    const isEgressed = hasEgressDate || Boolean(digitalInfo) || isDispatched;
+    const displayDate = (hasEgressDate ? sp.fecha_egreso : '') || digitalInfo?.fecha || (linkedAsset?.warehouse as any)?.fecha_egreso || (isDispatched ? 'Despachado' : '');
+    return { isEgressed, displayDate, digitalInfo };
+  }, [egressedInfoBySparePartId]);
 
   const handleOpenEmailForSpareParts = (parts: SparePart[]) => {
     if (parts.length === 0) return;
@@ -135,6 +168,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
     (sparePartsFilterMod ? 1 : 0) + 
     (sparePartsFilterCondicion ? 1 : 0) + 
     (sparePartsFilterOrigen ? 1 : 0) + 
+    (sparePartsFilterEstado !== 'ALL' ? 1 : 0) + 
     (sparePartsSort !== 'ge_newest' ? 1 : 0);
 
 
@@ -215,7 +249,14 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
       const matchMod = !sparePartsFilterMod || (normalizeOrInferModality(sp.mod, sp.equipo) || sp.mod) === sparePartsFilterMod;
       const matchCondicion = !sparePartsFilterCondicion || normalizeSparePartCondition(sp.condicion, sp.precio) === sparePartsFilterCondicion;
       const matchOrigen = !sparePartsFilterOrigen || sp.source === sparePartsFilterOrigen;
-      return matchSearch && matchAnio && matchMes && matchDia && matchMod && matchCondicion && matchOrigen;
+
+      const linked = sp.asset_id ? assetMap.get(sp.asset_id) : undefined;
+      const { isEgressed } = getSparePartEgressInfo(sp, linked);
+      const matchEstado = sparePartsFilterEstado === 'ALL' ||
+        (sparePartsFilterEstado === 'EGRESADO' && isEgressed) ||
+        (sparePartsFilterEstado === 'PENDIENTE' && !isEgressed);
+
+      return matchSearch && matchAnio && matchMes && matchDia && matchMod && matchCondicion && matchOrigen && matchEstado;
     });
 
     const parseDateValue = (sp: SparePart): number => {
@@ -275,7 +316,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
           return 0;
       }
     });
-  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterAnio, sparePartsFilterMes, sparePartsFilterDia, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsFilterOrigen, sparePartsSort]);
+  }, [spareParts, sparePartsDebouncedSearch, sparePartsFilterAnio, sparePartsFilterMes, sparePartsFilterDia, sparePartsFilterMod, sparePartsFilterCondicion, sparePartsFilterOrigen, sparePartsFilterEstado, sparePartsSort, assetMap, getSparePartEgressInfo]);
 
   const totalSparePartsPages = Math.max(1, Math.ceil(filteredSpareParts.length / sparePartsPageSize));
 
@@ -1321,7 +1362,17 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                             { value: 'CSV_IMPORT', label: 'Origen: Excel / CSV' },
                                             { value: 'MANUAL', label: 'Origen: Manual' }
                                         ]} />
-                                    {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsFilterOrigen || sparePartsSort !== 'ge_newest') && (
+                                    {/* Estado */}
+                                    <FilterSelect 
+                                        value={sparePartsFilterEstado === 'ALL' ? '' : sparePartsFilterEstado} 
+                                        onChange={(v) => { setSparePartsFilterEstado((v as any) || 'ALL'); setSparePartsPage(1); }} 
+                                        placeholder="Todos los estados"
+                                        options={[
+                                            { value: 'EGRESADO', label: 'Estado: Egresados' },
+                                            { value: 'PENDIENTE', label: 'Estado: Pendientes' }
+                                        ]} 
+                                    />
+                                    {(sparePartsSearch || sparePartsFilterAnio || sparePartsFilterMes || sparePartsFilterDia || sparePartsFilterMod || sparePartsFilterCondicion || sparePartsFilterOrigen || sparePartsFilterEstado !== 'ALL' || sparePartsSort !== 'ge_newest') && (
                                         <button onClick={() => { 
                                             setSparePartsSearch(''); 
                                             setSparePartsDebouncedSearch(''); 
@@ -1331,6 +1382,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                             setSparePartsFilterMod(''); 
                                             setSparePartsFilterCondicion(''); 
                                             setSparePartsFilterOrigen(''); 
+                                            setSparePartsFilterEstado('ALL'); 
                                             setSparePartsSort('ge_newest'); 
                                             setSparePartsPage(1);
                                         }}
@@ -1390,9 +1442,10 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                         </div>
 
                                         {paginatedSpareParts.map(sp => {
-                                            const linkedAsset = sp.asset_id ? assets.find(a => a.id === sp.asset_id) : undefined;
+                                            const linkedAsset = sp.asset_id ? assetMap.get(sp.asset_id) : undefined;
                                             const isSelected = selectedSparePartIds.has(sp.id);
                                             const condNorm = normalizeSparePartCondition(sp.condicion, sp.precio);
+                                            const { isEgressed, displayDate } = getSparePartEgressInfo(sp, linkedAsset);
 
                                             return (
                                                 <div 
@@ -1461,9 +1514,13 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                         <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                                                             Cant: {sp.cantidad ?? 1}
                                                         </span>
-                                                        {sp.fecha_egreso && (
-                                                            <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300">
-                                                                Egreso: {sp.fecha_egreso}
+                                                        {isEgressed && (
+                                                            <span 
+                                                                title={displayDate ? `Repuesto Egresado el ${displayDate}` : 'Repuesto Egresado'}
+                                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300"
+                                                            >
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                                Egreso: {displayDate || 'Confirmado'}
                                                             </span>
                                                         )}
                                                     </div>
@@ -1568,7 +1625,30 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                                 </button>
                                                             </>
                                                         )}
-                                                        {linkedAsset && (
+                                                        {isEgressed ? (
+                                                            linkedAsset ? (
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setSelectedAssetId(linkedAsset.id);
+                                                                        setActiveTab('LOGISTICS');
+                                                                    }}
+                                                                    className="px-2.5 py-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[10px] font-black uppercase inline-flex items-center gap-1 shadow-2xs"
+                                                                    title="Egresado. Clic para ver en Logística"
+                                                                >
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                                    Egresado
+                                                                </button>
+                                                            ) : (
+                                                                <span 
+                                                                    className="px-2.5 py-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[10px] font-black uppercase inline-flex items-center gap-1 shadow-2xs"
+                                                                    title={displayDate ? `Repuesto Egresado el ${displayDate}` : 'Repuesto Egresado'}
+                                                                >
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                                    Egresado
+                                                                </span>
+                                                            )
+                                                        ) : linkedAsset ? (
                                                             <button 
                                                                 type="button"
                                                                 onClick={() => {
@@ -1580,7 +1660,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                             >
                                                                 Logística
                                                             </button>
-                                                        )}
+                                                        ) : null}
                                                     </div>
                                                 </div>
                                             );
@@ -1660,7 +1740,7 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                         </span>
                                                     </th>
                                                     <th className="px-4 py-3">F. Instalación</th>
-                                                    <th className="px-4 py-3 text-center">Origen</th>
+                                                    <th className="px-4 py-3 text-center">Origen / Estado</th>
                                                     {canManageSpareParts && (
                                                         <th className="px-4 py-3 text-right">Acciones</th>
                                                     )}
@@ -1668,8 +1748,9 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                             </thead>
                                             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                                                 {paginatedSpareParts.map(sp => {
-                                                    const linkedAsset = sp.asset_id ? assets.find(a => a.id === sp.asset_id) : undefined;
+                                                    const linkedAsset = sp.asset_id ? assetMap.get(sp.asset_id) : undefined;
                                                     const isSelected = selectedSparePartIds.has(sp.id);
+                                                    const { isEgressed, displayDate } = getSparePartEgressInfo(sp, linkedAsset);
                                                     return (
                                                         <tr key={sp.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group ${isSelected ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : ''}`}>
                                                             <td className="w-10 px-3 py-3 text-center">
@@ -1691,9 +1772,13 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                             <td className="px-4 py-3">
                                                                 <div className="flex flex-col">
                                                                     <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">{sp.pn || '—'}</span>
-                                                                    {sp.fecha_egreso && (
-                                                                        <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 w-fit">
-                                                                            Egreso: {sp.fecha_egreso}
+                                                                    {isEgressed && (
+                                                                        <span 
+                                                                            title={displayDate ? `Repuesto Egresado el ${displayDate}` : 'Repuesto Egresado'}
+                                                                            className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 w-fit"
+                                                                        >
+                                                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                                            Egreso: {displayDate || 'Confirmado'}
                                                                         </span>
                                                                     )}
                                                                 </div>
@@ -1766,7 +1851,31 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                                     }`}>
                                                                         {sp.source === 'CSV_IMPORT' ? 'Excel' : sp.source === 'SOLICITUD' ? 'Solicitud' : 'Manual'}
                                                                     </span>
-                                                                    {linkedAsset && (
+                                                                    {isEgressed ? (
+                                                                        linkedAsset ? (
+                                                                            <button 
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setSelectedAssetId(linkedAsset.id);
+                                                                                    setActiveTab('LOGISTICS');
+                                                                                }}
+                                                                                title={`Repuesto Egresado (${displayDate || 'Despachado'}). Clic para ver en Logística`}
+                                                                                className="text-[8px] font-black px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 transition-colors uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs"
+                                                                            >
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                                                Egresado
+                                                                            </button>
+                                                                        ) : (
+                                                                            <span 
+                                                                                title={displayDate ? `Repuesto Egresado el ${displayDate}` : 'Repuesto Egresado'}
+                                                                                className="text-[8px] font-black px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs"
+                                                                            >
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                                                Egresado
+                                                                            </span>
+                                                                        )
+                                                                    ) : linkedAsset ? (
                                                                         <button 
                                                                             type="button"
                                                                             onClick={(e) => {
@@ -1781,9 +1890,9 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                                              linkedAsset.current_status === 'ORDERED' || linkedAsset.current_status === 'IN_TRANSIT' ? 'En Logística' :
                                                                              linkedAsset.current_status === 'CUSTOMS' ? 'En Aduana' :
                                                                              linkedAsset.current_status === 'RECEIVED_WH' ? 'En Bodega' :
-                                                                             linkedAsset.current_status === 'DISPATCHED' ? 'Despachado' : linkedAsset.current_status}
+                                                                             linkedAsset.current_status === 'DISPATCHED' ? 'Egresado' : linkedAsset.current_status}
                                                                         </button>
-                                                                    )}
+                                                                    ) : null}
                                                                 </div>
                                                             </td>
                                                             {canManageSpareParts && (
@@ -1818,8 +1927,12 @@ export const SparePartsModule: React.FC<SparePartsModuleProps> = memo(({
                                                                                     }]);
                                                                                 }
                                                                             }} 
-                                                                            title="Generar Egreso Digital para este repuesto"
-                                                                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-all"
+                                                                            title={isEgressed ? `Repuesto ya egresado (${displayDate || ''}). Clic para ver o generar nuevo egreso digital` : "Generar Egreso Digital para este repuesto"}
+                                                                            className={`p-1.5 rounded-lg transition-all ${
+                                                                                isEgressed 
+                                                                                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100' 
+                                                                                    : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                                                                            }`}
                                                                         >
                                                                             <FileText size={15}/>
                                                                         </button>

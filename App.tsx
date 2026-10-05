@@ -777,13 +777,19 @@ export default function App() {
       await setDoc(doc(db, 'egresos_digitales', egress.id), egress);
 
       // 2. Si proviene de REPUESTOS, actualizar fecha_egreso en spare_parts
+      // 2. Si proviene de REPUESTOS, actualizar fecha_egreso en spare_parts y assets vinculados
       if (egress.origen === 'REPUESTOS') {
         try {
           const batch = writeBatch(db);
           let count = 0;
           egress.items.forEach(it => {
-            if (it.spare_part_id) {
-              batch.update(doc(db, 'spare_parts', it.spare_part_id), {
+            let targetId = it.spare_part_id;
+            if (!targetId && it.codigo) {
+              const matched = spareParts.find(p => p.pn === it.codigo && (!p.fecha_egreso || p.fecha_egreso === '—' || p.fecha_egreso === '-'));
+              if (matched) targetId = matched.id;
+            }
+            if (targetId) {
+              batch.update(doc(db, 'spare_parts', targetId), {
                 fecha_egreso: fechaEgresoStr
               });
               count++;
@@ -795,6 +801,35 @@ export default function App() {
           setSelectedSparePartIds(new Set());
         } catch (spErr) {
           console.warn('Advertencia al actualizar spare_parts:', spErr);
+        }
+
+        // Si los repuestos tienen activo vinculado en assets, actualizar su estado a DISPATCHED
+        try {
+          for (const it of egress.items) {
+            const sp = spareParts.find(p => p.id === it.spare_part_id || p.pn === it.codigo);
+            if (sp && sp.asset_id) {
+              const linked = assets.find(a => a.id === sp.asset_id);
+              if (linked && linked.current_status !== AssetStatus.DISPATCHED) {
+                const updated = AssetLifecycleService.updateField(
+                  linked,
+                  'warehouse',
+                  { 
+                    responsable_egreso: egress.responsable, 
+                    destino_final: egress.cliente, 
+                    motivo_salida: `Egreso Digital #${egress.numero}` 
+                  },
+                  currentUser
+                ).updatedAsset;
+
+                await updateDoc(doc(db, 'assets', linked.id), {
+                  current_status: AssetStatus.DISPATCHED,
+                  warehouse: updated.warehouse
+                });
+              }
+            }
+          }
+        } catch (linkErr) {
+          console.warn('Advertencia al actualizar activos vinculados a repuestos:', linkErr);
         }
       }
 
@@ -826,6 +861,23 @@ export default function App() {
               });
               remaining -= inStock;
             }
+          }
+
+          // También marcar repuestos correspondientes como egresados
+          const spBatch = writeBatch(db);
+          let spCount = 0;
+          for (const it of egress.items) {
+            const matchedSp = spareParts.filter(p => p.pn === it.codigo && (!p.fecha_egreso || p.fecha_egreso === '—' || p.fecha_egreso === '-'));
+            for (const sp of matchedSp) {
+              spBatch.update(doc(db, 'spare_parts', sp.id), {
+                fecha_egreso: fechaEgresoStr
+              });
+              spCount++;
+              break;
+            }
+          }
+          if (spCount > 0) {
+            await spBatch.commit();
           }
         } catch (whErr) {
           console.warn('Advertencia al actualizar activos de bodega:', whErr);
@@ -1340,6 +1392,7 @@ export default function App() {
                 spareParts={spareParts}
                 sparePartsLoading={sparePartsLoading}
                 assets={assets}
+                digitalEgresses={digitalEgresses}
                 currentUser={currentUser}
                 canManageSpareParts={canManageSpareParts}
                 showToast={showToast}
