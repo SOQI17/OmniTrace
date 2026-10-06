@@ -21,7 +21,7 @@ import { DigitalEgressModal } from './components/DigitalEgressModal';
 import { SparePartsModule } from './components/modules/SparePartsModule';
 import { WarehouseModule } from './components/modules/WarehouseModule';
 import { DashboardModule } from './components/modules/DashboardModule';
-import { AdminModule } from './components/modules/AdminModule';
+import { AdminModule, SYSTEM_MODULES, DEFAULT_PERMISSIONS } from './components/modules/AdminModule';
 import { DocsModule } from './components/modules/DocsModule';
 import { ReturnsModule } from './components/modules/ReturnsModule';
 import { ScannerModule } from './components/modules/ScannerModule';
@@ -103,38 +103,7 @@ import {
   Building2
 } from 'lucide-react';
 
-// ─── PERMISOS DISPONIBLES ────────────────────────────────────────────────────
-// Cada permiso puede sobreescribir el comportamiento del rol base.
-const ALL_PERMISSIONS: { key: string; label: string; description: string; group: string }[] = [
-  // Solicitud
-  { key: 'crear_solicitudes',    label: 'Crear Solicitudes',       description: 'Crear órdenes de repuestos y equipos',      group: 'Solicitud' },
-  { key: 'prestamo_herramientas',label: 'Préstamo Herramientas',   description: 'Crear solicitudes de préstamo',              group: 'Solicitud' },
-  // Logística
-  { key: 'ver_logistica',        label: 'Ver Logística',           description: 'Acceder al módulo de logística',             group: 'Logística' },
-  { key: 'editar_logistica',     label: 'Editar Logística',        description: 'Modificar tracking, costos y liquidación',   group: 'Logística' },
-  { key: 'cerrar_importacion',   label: 'Cerrar Importación',      description: 'Marcar importaciones como cerradas',         group: 'Logística' },
-  { key: 'exportar_excel',       label: 'Exportar Excel',          description: 'Descargar liquidaciones en Excel',           group: 'Logística' },
-  // Bodega
-  { key: 'ver_bodega',           label: 'Ver Bodega',              description: 'Acceder al módulo de bodega',                group: 'Bodega' },
-  { key: 'recibir_bodega',       label: 'Recibir en Bodega',       description: 'Ingresar activos a bodega',                  group: 'Bodega' },
-  { key: 'despachar',            label: 'Despachar',               description: 'Realizar despachos de inventario',           group: 'Bodega' },
-  { key: 'ajustar_inventario',   label: 'Ajustar Inventario',      description: 'Modificar stock e información de productos',  group: 'Bodega' },
-  // Documentos
-  { key: 'ver_documentos',       label: 'Ver Documentos',          description: 'Acceder al expediente documental',           group: 'Documentos' },
-  { key: 'subir_documentos',     label: 'Subir Documentos',        description: 'Adjuntar archivos a las órdenes',            group: 'Documentos' },
-  { key: 'eliminar_documentos',  label: 'Eliminar Documentos',     description: 'Borrar documentos adjuntos',                 group: 'Documentos' },
-  // Retornos
-  { key: 'ver_retornos',         label: 'Ver Retornos',            description: 'Ver garantías y préstamos activos',          group: 'Retornos' },
-  { key: 'gestionar_retornos',   label: 'Gestionar Retornos',      description: 'Procesar devoluciones y retornos',           group: 'Retornos' },
-];
 
-// Permisos predeterminados por rol
-const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
-  REQUESTER: { crear_solicitudes: true,  prestamo_herramientas: true,  ver_logistica: false, editar_logistica: false, cerrar_importacion: false, exportar_excel: false, ver_bodega: false, recibir_bodega: false, despachar: false, ajustar_inventario: false, ver_documentos: false, subir_documentos: false, eliminar_documentos: false, ver_retornos: false, gestionar_retornos: false },
-  IMPORTER:  { crear_solicitudes: true,  prestamo_herramientas: true,  ver_logistica: true,  editar_logistica: true,  cerrar_importacion: true,  exportar_excel: true,  ver_bodega: false, recibir_bodega: false, despachar: false, ajustar_inventario: false, ver_documentos: true,  subir_documentos: true,  eliminar_documentos: true,  ver_retornos: true,  gestionar_retornos: false },
-  WAREHOUSE: { crear_solicitudes: false, prestamo_herramientas: false, ver_logistica: false, editar_logistica: false, cerrar_importacion: false, exportar_excel: false, ver_bodega: true,  recibir_bodega: true,  despachar: true,  ajustar_inventario: true,  ver_documentos: true,  subir_documentos: true,  eliminar_documentos: false, ver_retornos: true,  gestionar_retornos: true  },
-  ADMIN:     { crear_solicitudes: true,  prestamo_herramientas: true,  ver_logistica: true,  editar_logistica: true,  cerrar_importacion: true,  exportar_excel: true,  ver_bodega: true,  recibir_bodega: true,  despachar: true,  ajustar_inventario: true,  ver_documentos: true,  subir_documentos: true,  eliminar_documentos: true,  ver_retornos: true,  gestionar_retornos: true  },
-};
 
 // ─── TOAST ──────────────────────────────────────────────────────────────────
 type ToastType = 'error' | 'success' | 'info' | 'confirm';
@@ -679,12 +648,33 @@ export default function App() {
 
   const availableInventoryList = inventoryList.filter(i => i.stock > 0);
 
-  const canEditLogistics = currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
-  const canEditWarehouse = currentUser?.role === 'WAREHOUSE' || currentUser?.role === 'ADMIN';
-  const canCreateRequest = currentUser?.role === 'REQUESTER' || currentUser?.role === 'ADMIN';
-  const canViewLogistics = currentUser?.role !== 'WAREHOUSE';
-  const canCloseImport = currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
-  const canExportExcel = currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
+  // ─── CONTROL DINÁMICO DE ACCESO A MÓDULOS Y OPERACIONES ──────────────────────
+  const canAccessModule = useCallback((moduleKey: string): boolean => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'ADMIN') return true;
+    if (currentUser.permissions && currentUser.permissions[moduleKey] !== undefined) {
+      return Boolean(currentUser.permissions[moduleKey]);
+    }
+    const defaults = DEFAULT_PERMISSIONS[currentUser.role] || {};
+    return Boolean(defaults[moduleKey]);
+  }, [currentUser]);
+
+  const hasPermission = useCallback((permKey: string): boolean => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'ADMIN') return true;
+    if (currentUser.permissions && currentUser.permissions[permKey] !== undefined) {
+      return Boolean(currentUser.permissions[permKey]);
+    }
+    const defaults = DEFAULT_PERMISSIONS[currentUser.role] || {};
+    return Boolean(defaults[permKey]);
+  }, [currentUser]);
+
+  const canEditLogistics = hasPermission('editar_logistica') || currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
+  const canEditWarehouse = hasPermission('ajustar_inventario') || currentUser?.role === 'WAREHOUSE' || currentUser?.role === 'ADMIN';
+  const canCreateRequest = canAccessModule('modulo_solicitudes') && (hasPermission('crear_solicitudes') || currentUser?.role === 'REQUESTER' || currentUser?.role === 'ADMIN');
+  const canViewLogistics = canAccessModule('modulo_logistica');
+  const canCloseImport = hasPermission('cerrar_importacion') || currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
+  const canExportExcel = hasPermission('exportar_excel') || currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
 
   const filteredGlobalAssets = globalSearchTerm.length < 2 ? [] : assets.filter(a => 
       a.metadata.pn.toLowerCase().includes(globalSearchTerm.toLowerCase()) ||
@@ -1037,6 +1027,7 @@ export default function App() {
           const userDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', firebaseUser.uid)));
           let role: UserRole;
           let displayName: string;
+          let userPermissions: Record<string, boolean> | undefined;
 
           if (!userDoc.empty) {
             const data = userDoc.docs[0].data();
@@ -1050,11 +1041,13 @@ export default function App() {
             // El rol viene de Firestore; si no está definido, mínimo privilegio
             role = (data.role as UserRole) || 'REQUESTER';
             displayName = data.displayName || firebaseUser.email.split('@')[0];
+            userPermissions = data.permissions;
           } else {
             // 2. Usuario nuevo — asignar mínimo privilegio y auto-registrar en Firestore
             // Un ADMIN puede asignar el rol correcto desde el panel de administración.
             role = 'REQUESTER';
             displayName = firebaseUser.email.split('@')[0];
+            const defaultPerms = DEFAULT_PERMISSIONS[role] || {};
             // Auto-registrar en Firestore para futuras gestiones
             await setDoc(doc(db, 'users', firebaseUser.uid), {
               uid: firebaseUser.uid,
@@ -1062,9 +1055,11 @@ export default function App() {
               displayName,
               role,
               active: true,
+              permissions: defaultPerms,
               createdAt: new Date().toISOString(),
               lastLogin: new Date().toISOString(),
             });
+            userPermissions = defaultPerms;
           }
 
           // Actualizar lastLogin
@@ -1072,11 +1067,17 @@ export default function App() {
             lastLogin: new Date().toISOString()
           }).catch(() => {});
 
-          setCurrentUser({ id: firebaseUser.uid, name: displayName, role });
+          setCurrentUser({ 
+            id: firebaseUser.uid, 
+            name: displayName, 
+            role, 
+            email: firebaseUser.email, 
+            permissions: userPermissions 
+          });
           setSessionExpired(false);
         } catch {
           // Fallback si Firestore falla — mínimo privilegio por seguridad
-          setCurrentUser({ id: firebaseUser.uid, name: firebaseUser.email.split('@')[0], role: 'REQUESTER' });
+          setCurrentUser({ id: firebaseUser.uid, name: firebaseUser.email.split('@')[0], role: 'REQUESTER', email: firebaseUser.email });
           setSessionExpired(false);
         }
       } else {
@@ -1274,16 +1275,32 @@ export default function App() {
         {/* SIDEBAR ESTÁTICO (su propio scroll independiente) */}
         <nav className="hidden sm:flex w-56 h-full flex-none bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex-col overflow-y-auto scrollbar-none">
             <div className="p-4 space-y-1">
-                <NavButton active={activeTab==='DASHBOARD'} onClick={()=>setActiveTab('DASHBOARD')} icon={<LayoutDashboard size={18}/>} label="Dashboard" />
-                <NavButton active={activeTab==='REQUEST'} onClick={()=>{setActiveTab('REQUEST'); setRequestMode('MENU');}} icon={<FileText size={18}/>} label="1. Solicitud" disabled={!canCreateRequest}/>
-                <NavButton active={activeTab==='LOGISTICS'} onClick={()=>setActiveTab('LOGISTICS')} icon={<Truck size={18}/>} label="2. Logística" disabled={!canViewLogistics} />
-                <NavButton active={activeTab==='DOCS'} onClick={()=>setActiveTab('DOCS')} icon={<FileCheck size={18}/>} label="Documentos" />
-                <NavButton active={activeTab==='WAREHOUSE'} onClick={()=>setActiveTab('WAREHOUSE')} icon={<Warehouse size={18}/>} label="3. Bodega" />
-                <NavButton active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode size={18}/>} label="4. Egreso QR" />
-                <NavButton active={activeTab==='RETURNS'} onClick={()=>setActiveTab('RETURNS')} icon={<RotateCcw size={18}/>} label="5. Retornos" />
-                <NavButton active={activeTab==='SPAREPARTS'} onClick={()=>setActiveTab('SPAREPARTS')} icon={<Package size={18}/>} label="6. Repuestos" />
-                {isAdmin && (
-                  <NavButton active={activeTab==='ADMIN'} onClick={()=>setActiveTab('ADMIN')} icon={<Shield size={18}/>} label="Admin" />
+                {canAccessModule('modulo_dashboard') && (
+                  <NavButton active={activeTab==='DASHBOARD'} onClick={()=>setActiveTab('DASHBOARD')} icon={<LayoutDashboard size={18}/>} label="Dashboard" />
+                )}
+                {canAccessModule('modulo_solicitudes') && (
+                  <NavButton active={activeTab==='REQUEST'} onClick={()=>{setActiveTab('REQUEST'); setRequestMode('MENU');}} icon={<FileText size={18}/>} label="1. Solicitud" disabled={!canCreateRequest}/>
+                )}
+                {canAccessModule('modulo_logistica') && (
+                  <NavButton active={activeTab==='LOGISTICS'} onClick={()=>setActiveTab('LOGISTICS')} icon={<Truck size={18}/>} label="2. Logística" disabled={!canViewLogistics} />
+                )}
+                {canAccessModule('modulo_documentos') && (
+                  <NavButton active={activeTab==='DOCS'} onClick={()=>setActiveTab('DOCS')} icon={<FileCheck size={18}/>} label="Documentos" />
+                )}
+                {canAccessModule('modulo_bodega') && (
+                  <NavButton active={activeTab==='WAREHOUSE'} onClick={()=>setActiveTab('WAREHOUSE')} icon={<Warehouse size={18}/>} label="3. Bodega" />
+                )}
+                {canAccessModule('modulo_egreso_qr') && (
+                  <NavButton active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode size={18}/>} label="4. Egreso QR" />
+                )}
+                {canAccessModule('modulo_retornos') && (
+                  <NavButton active={activeTab==='RETURNS'} onClick={()=>setActiveTab('RETURNS')} icon={<RotateCcw size={18}/>} label="5. Retornos" />
+                )}
+                {canAccessModule('modulo_repuestos') && (
+                  <NavButton active={activeTab==='SPAREPARTS'} onClick={()=>setActiveTab('SPAREPARTS')} icon={<Package size={18}/>} label="6. Repuestos" />
+                )}
+                {(isAdmin || canAccessModule('modulo_admin')) && (
+                  <NavButton active={activeTab==='ADMIN'} onClick={()=>setActiveTab('ADMIN')} icon={<Users size={18}/>} label="Usuarios & Admin" />
                 )}
             </div>
             <div className="mt-auto p-4 border-t bg-slate-50/50 dark:bg-slate-800/50 dark:border-slate-700">
@@ -1406,8 +1423,8 @@ export default function App() {
               />
             )}
 
-                    {/* ── PANEL DE ADMINISTRACIÓN ── */}
-            {activeTab === 'ADMIN' && isAdmin && (
+                    {/* ── PANEL DE ADMINISTRACIÓN Y GESTIÓN DE USUARIOS ── */}
+            {activeTab === 'ADMIN' && (isAdmin || canAccessModule('modulo_admin')) && (
               <AdminModule
                 currentUser={currentUser}
                 logs={logs}
@@ -1419,16 +1436,32 @@ export default function App() {
         </main>
         
         <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between overflow-x-auto scrollbar-none h-16 z-50 shadow-[0_-2px_20px_rgba(0,0,0,0.1)] pb-safe rounded-t-2xl px-1">
-            <NavButton mobileMode active={activeTab==='DASHBOARD'} onClick={()=>setActiveTab('DASHBOARD')} icon={<LayoutDashboard />} label="Dash" />
-            <NavButton mobileMode active={activeTab==='REQUEST'} onClick={()=>{setActiveTab('REQUEST'); setRequestMode('MENU');}} icon={<Plus />} label="Nuevo" disabled={!canCreateRequest}/>
-            <NavButton mobileMode active={activeTab==='LOGISTICS'} onClick={()=>setActiveTab('LOGISTICS')} icon={<Truck />} label="Logist" disabled={!canViewLogistics} />
-            <NavButton mobileMode active={activeTab==='DOCS'} onClick={()=>setActiveTab('DOCS')} icon={<FileCheck />} label="Docs" />
-            <NavButton mobileMode active={activeTab==='WAREHOUSE'} onClick={()=>setActiveTab('WAREHOUSE')} icon={<Warehouse />} label="Bodega" />
-            <NavButton mobileMode active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode />} label="Egreso QR" />
-            <NavButton mobileMode active={activeTab==='RETURNS'} onClick={()=>setActiveTab('RETURNS')} icon={<RotateCcw />} label="Retornos" />
-            <NavButton mobileMode active={activeTab==='SPAREPARTS'} onClick={()=>setActiveTab('SPAREPARTS')} icon={<Package />} label="Repuestos" />
-            {isAdmin && (
-              <NavButton mobileMode active={activeTab==='ADMIN'} onClick={()=>setActiveTab('ADMIN')} icon={<Shield />} label="Admin" />
+            {canAccessModule('modulo_dashboard') && (
+              <NavButton mobileMode active={activeTab==='DASHBOARD'} onClick={()=>setActiveTab('DASHBOARD')} icon={<LayoutDashboard />} label="Dash" />
+            )}
+            {canAccessModule('modulo_solicitudes') && (
+              <NavButton mobileMode active={activeTab==='REQUEST'} onClick={()=>{setActiveTab('REQUEST'); setRequestMode('MENU');}} icon={<Plus />} label="Nuevo" disabled={!canCreateRequest}/>
+            )}
+            {canAccessModule('modulo_logistica') && (
+              <NavButton mobileMode active={activeTab==='LOGISTICS'} onClick={()=>setActiveTab('LOGISTICS')} icon={<Truck />} label="Logist" disabled={!canViewLogistics} />
+            )}
+            {canAccessModule('modulo_documentos') && (
+              <NavButton mobileMode active={activeTab==='DOCS'} onClick={()=>setActiveTab('DOCS')} icon={<FileCheck />} label="Docs" />
+            )}
+            {canAccessModule('modulo_bodega') && (
+              <NavButton mobileMode active={activeTab==='WAREHOUSE'} onClick={()=>setActiveTab('WAREHOUSE')} icon={<Warehouse />} label="Bodega" />
+            )}
+            {canAccessModule('modulo_egreso_qr') && (
+              <NavButton mobileMode active={activeTab==='SCANNER'} onClick={()=>setActiveTab('SCANNER')} icon={<QrCode />} label="Egreso QR" />
+            )}
+            {canAccessModule('modulo_retornos') && (
+              <NavButton mobileMode active={activeTab==='RETURNS'} onClick={()=>setActiveTab('RETURNS')} icon={<RotateCcw />} label="Retornos" />
+            )}
+            {canAccessModule('modulo_repuestos') && (
+              <NavButton mobileMode active={activeTab==='SPAREPARTS'} onClick={()=>setActiveTab('SPAREPARTS')} icon={<Package />} label="Repuestos" />
+            )}
+            {(isAdmin || canAccessModule('modulo_admin')) && (
+              <NavButton mobileMode active={activeTab==='ADMIN'} onClick={()=>setActiveTab('ADMIN')} icon={<Users />} label="Usuarios" />
             )}
         </nav>
       </div>

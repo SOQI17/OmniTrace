@@ -232,6 +232,8 @@ export interface User {
   id: string;
   name: string;
   role: UserRole;
+  email?: string;
+  permissions?: Record<string, boolean>;
 }
 
 // Mermaid Diagram Source for documentation
