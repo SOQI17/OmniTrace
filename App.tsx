@@ -649,25 +649,33 @@ export default function App() {
   const availableInventoryList = inventoryList.filter(i => i.stock > 0);
 
   // ─── CONTROL DINÁMICO DE ACCESO A MÓDULOS Y OPERACIONES ──────────────────────
+  const isSuperAdminUser = useCallback((user: User | null): boolean => {
+    if (!user) return false;
+    if (user.role === 'ADMIN') return true;
+    const email = (user.email || '').toLowerCase();
+    const name = (user.name || '').toLowerCase();
+    return email.includes('alexis.guerra') || email === 'alexis.guerra@orimec.com.ec' || name.includes('alexis');
+  }, []);
+
   const canAccessModule = useCallback((moduleKey: string): boolean => {
     if (!currentUser) return false;
-    if (currentUser.role === 'ADMIN') return true;
+    if (isSuperAdminUser(currentUser)) return true;
     if (currentUser.permissions && currentUser.permissions[moduleKey] !== undefined) {
       return Boolean(currentUser.permissions[moduleKey]);
     }
     const defaults = DEFAULT_PERMISSIONS[currentUser.role] || {};
     return Boolean(defaults[moduleKey]);
-  }, [currentUser]);
+  }, [currentUser, isSuperAdminUser]);
 
   const hasPermission = useCallback((permKey: string): boolean => {
     if (!currentUser) return false;
-    if (currentUser.role === 'ADMIN') return true;
+    if (isSuperAdminUser(currentUser)) return true;
     if (currentUser.permissions && currentUser.permissions[permKey] !== undefined) {
       return Boolean(currentUser.permissions[permKey]);
     }
     const defaults = DEFAULT_PERMISSIONS[currentUser.role] || {};
     return Boolean(defaults[permKey]);
-  }, [currentUser]);
+  }, [currentUser, isSuperAdminUser]);
 
   const canEditLogistics = hasPermission('editar_logistica') || currentUser?.role === 'IMPORTER' || currentUser?.role === 'ADMIN';
   const canEditWarehouse = hasPermission('ajustar_inventario') || currentUser?.role === 'WAREHOUSE' || currentUser?.role === 'ADMIN';
@@ -1014,7 +1022,9 @@ export default function App() {
   // Nota: los comentarios por orden se gestionan internamente en LogisticsModule
   // (su propio listener de 'order_comments'); ya no hay estado espejo aquí.
 
-  const isAdmin = currentUser?.role === 'ADMIN';
+  const isAdmin = currentUser?.role === 'ADMIN' || 
+    Boolean(currentUser?.email && (currentUser.email.toLowerCase().includes('alexis.guerra') || currentUser.email.toLowerCase() === 'alexis.guerra@orimec.com.ec')) ||
+    Boolean(currentUser?.name && currentUser.name.toLowerCase().includes('alexis'));
   const canManageSpareParts = isAdmin || Boolean(currentUser?.name && currentUser.name.toLowerCase().includes('alexis'));
 
   // (Auto-guardado modularizado en LogisticsModule)
@@ -1023,35 +1033,53 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser && firebaseUser.email) {
         try {
-          // 1. Intentar leer rol desde Firestore (gestión centralizada)
-          const userDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', firebaseUser.uid)));
+          const cleanEmail = firebaseUser.email.trim().toLowerCase();
+          const isKnownAdmin = cleanEmail === 'alexis.guerra@orimec.com.ec' || cleanEmail.includes('alexis.guerra');
+
+          // 1. Intentar leer por uid
+          let userSnap = await getDocs(query(collection(db, 'users'), where('uid', '==', firebaseUser.uid)));
+          // Si no está por uid, buscar por email (casos de seed o pre-registro)
+          if (userSnap.empty && firebaseUser.email) {
+            userSnap = await getDocs(query(collection(db, 'users'), where('email', '==', cleanEmail)));
+          }
+
           let role: UserRole;
           let displayName: string;
           let userPermissions: Record<string, boolean> | undefined;
 
-          if (!userDoc.empty) {
-            const data = userDoc.docs[0].data();
+          if (!userSnap.empty) {
+            const data = userSnap.docs[0].data();
+            const docRef = userSnap.docs[0].ref;
+
             // Si el usuario está desactivado, cerrar sesión
-            if (data.active === false) {
+            if (data.active === false && !isKnownAdmin) {
               await signOut(auth);
               showToast('Tu cuenta ha sido desactivada. Contacta al administrador.', 'error', 8000);
               setLoadingAuth(false);
               return;
             }
-            // El rol viene de Firestore; si no está definido, mínimo privilegio
-            role = (data.role as UserRole) || 'REQUESTER';
-            displayName = data.displayName || firebaseUser.email.split('@')[0];
-            userPermissions = data.permissions;
+
+            role = isKnownAdmin ? 'ADMIN' : ((data.role as UserRole) || 'REQUESTER');
+            displayName = data.displayName || firebaseUser.displayName || cleanEmail.split('@')[0];
+            userPermissions = isKnownAdmin ? DEFAULT_PERMISSIONS.ADMIN : (data.permissions || DEFAULT_PERMISSIONS[role]);
+
+            // Si es Alexis o super admin, asegurar en Firestore que esté como ADMIN con permisos completos y uid actualizado
+            await updateDoc(docRef, {
+              uid: firebaseUser.uid,
+              role: isKnownAdmin ? 'ADMIN' : role,
+              active: true,
+              permissions: isKnownAdmin ? DEFAULT_PERMISSIONS.ADMIN : userPermissions,
+              lastLogin: new Date().toISOString()
+            }).catch(() => {});
           } else {
-            // 2. Usuario nuevo — asignar mínimo privilegio y auto-registrar en Firestore
-            // Un ADMIN puede asignar el rol correcto desde el panel de administración.
-            role = 'REQUESTER';
-            displayName = firebaseUser.email.split('@')[0];
+            // Usuario nuevo
+            role = isKnownAdmin ? 'ADMIN' : 'REQUESTER';
+            displayName = firebaseUser.displayName || cleanEmail.split('@')[0];
             const defaultPerms = DEFAULT_PERMISSIONS[role] || {};
-            // Auto-registrar en Firestore para futuras gestiones
+
             await setDoc(doc(db, 'users', firebaseUser.uid), {
               uid: firebaseUser.uid,
-              email: firebaseUser.email,
+              email: cleanEmail,
               displayName,
               role,
               active: true,
@@ -1062,22 +1090,24 @@ export default function App() {
             userPermissions = defaultPerms;
           }
 
-          // Actualizar lastLogin
-          await updateDoc(doc(db, 'users', firebaseUser.uid), {
-            lastLogin: new Date().toISOString()
-          }).catch(() => {});
-
           setCurrentUser({ 
             id: firebaseUser.uid, 
             name: displayName, 
             role, 
-            email: firebaseUser.email, 
+            email: cleanEmail, 
             permissions: userPermissions 
           });
           setSessionExpired(false);
         } catch {
-          // Fallback si Firestore falla — mínimo privilegio por seguridad
-          setCurrentUser({ id: firebaseUser.uid, name: firebaseUser.email.split('@')[0], role: 'REQUESTER', email: firebaseUser.email });
+          const cleanEmail = firebaseUser.email.trim().toLowerCase();
+          const isKnownAdmin = cleanEmail === 'alexis.guerra@orimec.com.ec' || cleanEmail.includes('alexis.guerra');
+          setCurrentUser({ 
+            id: firebaseUser.uid, 
+            name: cleanEmail.split('@')[0], 
+            role: isKnownAdmin ? 'ADMIN' : 'REQUESTER', 
+            email: cleanEmail,
+            permissions: isKnownAdmin ? DEFAULT_PERMISSIONS.ADMIN : DEFAULT_PERMISSIONS.REQUESTER
+          });
           setSessionExpired(false);
         }
       } else {
