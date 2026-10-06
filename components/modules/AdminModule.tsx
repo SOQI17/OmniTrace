@@ -7,7 +7,7 @@ import {
 import { auth, db } from '../../firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { 
-  collection, doc, onSnapshot, writeBatch, updateDoc, setDoc 
+  collection, doc, onSnapshot, writeBatch, updateDoc, setDoc, deleteDoc 
 } from 'firebase/firestore';
 import { 
   Shield, 
@@ -23,6 +23,7 @@ import {
   X,
   Search,
   Check,
+  Trash2,
   CheckSquare,
   Square,
   Lock,
@@ -236,6 +237,15 @@ export const AdminModule: React.FC<AdminModuleProps> = memo(({
   const [editingUserRole, setEditingUserRole] = useState<string | null>(null);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   
+  // Modal de edición completa de usuario
+  const [editingUserData, setEditingUserData] = useState<{
+    uid: string;
+    displayName: string;
+    email: string;
+    role: UserRole;
+  } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  
   // Formulario nuevo usuario
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole>('REQUESTER');
@@ -247,32 +257,10 @@ export const AdminModule: React.FC<AdminModuleProps> = memo(({
     if (!currentUser || currentUser.role !== 'ADMIN') return;
     setUsersLoading(true);
     const unsub = onSnapshot(collection(db, 'users'),
-      async (snap) => {
+      (snap) => {
         const users = snap.docs.map(d => ({ uid: d.id, ...d.data() } as any));
         setFirestoreUsers(users);
         setUsersLoading(false);
-
-        // Pre-carga de usuarios fundadores si la colección está vacía
-        const seedUsers = [
-          { key: 'alexis.guerra', email: 'alexis.guerra@orimec.com.ec', name: 'Alexis Guerra',   role: 'ADMIN'     },
-          { key: 'paul.orozco',   email: 'paul.orozco@orimec.com.ec',   name: 'Paul Orozco',     role: 'IMPORTER'  },
-          { key: 'vosorio',       email: 'vosorio@orimec.com.ec',        name: 'Virgilio Osorio', role: 'WAREHOUSE' },
-        ];
-        const existingEmails = users.map((u: any) => u.email?.toLowerCase());
-        const missing = seedUsers.filter(s => !existingEmails.some((e: string) => e?.includes(s.key)));
-        if (missing.length > 0) {
-          const batch = writeBatch(db);
-          missing.forEach(u => {
-            const tempId = `seed_${u.key.replace('.', '_')}`;
-            batch.set(doc(db, 'users', tempId), {
-              uid: tempId, email: u.email, displayName: u.name,
-              role: u.role, active: true,
-              createdAt: new Date().toISOString(), pending: true,
-              permissions: DEFAULT_PERMISSIONS[u.role] || {}
-            });
-          });
-          await batch.commit().catch(() => {});
-        }
       },
       (err) => {
         console.error('Error cargando usuarios:', err);
@@ -359,6 +347,55 @@ export const AdminModule: React.FC<AdminModuleProps> = memo(({
       showToast(`Usuario ${currentActive ? 'desactivado' : 'activado'} correctamente.`, 'success');
     } catch (e: any) { 
       showError(`Error al cambiar estado: ${e.message}`); 
+    }
+  };
+
+  // Guardar cambios en edición de usuario (Nombre, Email, Rol)
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUserData) return;
+    if (!editingUserData.displayName.trim() || !editingUserData.email.trim()) {
+      showToast('Nombre y correo son requeridos.', 'error');
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      await updateDoc(doc(db, 'users', editingUserData.uid), {
+        displayName: editingUserData.displayName.trim(),
+        email: editingUserData.email.trim().toLowerCase(),
+        role: editingUserData.role
+      });
+      showToast(`Usuario ${editingUserData.displayName} actualizado correctamente.`, 'success');
+      setEditingUserData(null);
+    } catch (err: any) {
+      showError(`Error al guardar cambios del usuario: ${err.message}`);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Eliminar usuario
+  const handleDeleteUser = async (uid: string, userName: string, userEmail: string) => {
+    if (uid === currentUser?.id) {
+      showToast('No puedes eliminar tu propia cuenta en sesión.', 'error');
+      return;
+    }
+    const isAlexis = userEmail.toLowerCase().includes('alexis.guerra');
+    if (isAlexis) {
+      showToast('No se puede eliminar la cuenta principal del Super Admin.', 'error');
+      return;
+    }
+
+    const confirmed = await showConfirm(`¿Confirmas que deseas ELIMINAR definitivamente al usuario "${userName}" (${userEmail}) de OmniTrace?\n\nEsta acción quitará su registro y permisos.`);
+    if (!confirmed) return;
+
+    try {
+      await deleteDoc(doc(db, 'users', uid));
+      showToast(`Usuario "${userName}" eliminado de Firestore.`, 'info');
+      if (editingUserPerms === uid) setEditingUserPerms(null);
+    } catch (err: any) {
+      showError(`Error al eliminar usuario: ${err.message}`);
     }
   };
 
@@ -742,18 +779,34 @@ export const AdminModule: React.FC<AdminModuleProps> = memo(({
                       {/* Acciones */}
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-center gap-1.5">
+                          {/* Editar datos del usuario (Nombre, Email, Rol) */}
+                          <button
+                            onClick={() => setEditingUserData({
+                              uid: u.uid,
+                              displayName: u.displayName || '',
+                              email: u.email || '',
+                              role: u.role
+                            })}
+                            className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-xl transition-all"
+                            title="Editar datos del usuario (Nombre, Correo, Rol)"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+
+                          {/* Configurar accesos a módulos */}
                           <button
                             onClick={() => setEditingUserPerms(editingUserPerms === u.uid ? null : u.uid)}
                             className={`p-2 rounded-xl transition-all ${
                               editingUserPerms === u.uid
                                 ? 'bg-blue-600 text-white'
-                                : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30'
+                                : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30'
                             }`}
                             title="Configurar accesos a módulos"
                           >
                             <Shield size={16} />
                           </button>
 
+                          {/* Reset contraseña */}
                           {!u.email.includes('pending') && (
                             <button
                               onClick={() => handleResetPasswordForUser(u.email)}
@@ -761,6 +814,17 @@ export const AdminModule: React.FC<AdminModuleProps> = memo(({
                               title="Enviar correo de restablecimiento de contraseña"
                             >
                               <RotateCcw size={16} />
+                            </button>
+                          )}
+
+                          {/* Eliminar usuario */}
+                          {!isSelf && (
+                            <button
+                              onClick={() => handleDeleteUser(u.uid, u.displayName, u.email)}
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-xl transition-all"
+                              title="Eliminar usuario definitivamente"
+                            >
+                              <Trash2 size={16} />
                             </button>
                           )}
                         </div>
@@ -1118,6 +1182,96 @@ export const AdminModule: React.FC<AdminModuleProps> = memo(({
                 >
                   {submittingUser ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                   Registrar Usuario
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL EDITAR USUARIO ── */}
+      {editingUserData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl relative">
+            <button
+              onClick={() => setEditingUserData(null)}
+              className="absolute top-6 right-6 p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                <Edit3 size={24} />
+              </div>
+              <div>
+                <h3 className="font-black text-slate-900 dark:text-white text-lg">
+                  Editar Usuario
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Modifica el nombre visible, correo o rol del colaborador.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveEditUser} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Nombre Completo
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editingUserData.displayName}
+                  onChange={e => setEditingUserData({ ...editingUserData, displayName: e.target.value })}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Correo Electrónico
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={editingUserData.email}
+                  onChange={e => setEditingUserData({ ...editingUserData, email: e.target.value })}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Rol en Sistema
+                </label>
+                <select
+                  value={editingUserData.role}
+                  onChange={e => setEditingUserData({ ...editingUserData, role: e.target.value as UserRole })}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                >
+                  <option value="REQUESTER">REQUESTER — Solicitante Técnico</option>
+                  <option value="IMPORTER">IMPORTER — Logística e Importaciones</option>
+                  <option value="WAREHOUSE">WAREHOUSE — Bodega e Inventario</option>
+                  <option value="ADMIN">ADMIN — Super Administrador</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingUserData(null)}
+                  className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
+                >
+                  {savingEdit ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                  Guardar Cambios
                 </button>
               </div>
             </form>
